@@ -7,7 +7,9 @@ pub mod cli;
 mod clipboard;
 mod commands;
 mod formatting;
+mod hardware;
 mod helpers;
+mod model_recommend;
 mod input;
 mod llm_client;
 mod managers;
@@ -426,6 +428,8 @@ pub fn run(cli_args: CliArgs) {
             commands::history::retry_history_entry_transcription,
             commands::history::update_history_limit,
             commands::history::update_recording_retention_period,
+            commands::onboarding::detect_hardware,
+            commands::onboarding::recommend_model_for_languages,
             helpers::clamshell::is_laptop,
         ])
         .events(collect_events![managers::history::HistoryUpdatePayload,]);
@@ -513,7 +517,7 @@ pub fn run(cli_args: CliArgs) {
             // for portable mode (redirects WebView2 cache to portable Data dir)
             let mut win_builder =
                 tauri::WebviewWindowBuilder::new(app, "main", tauri::WebviewUrl::App("/".into()))
-                    .title("Handy")
+                    .title("Spokn")
                     .inner_size(680.0, 570.0)
                     .min_inner_size(680.0, 570.0)
                     .resizable(true)

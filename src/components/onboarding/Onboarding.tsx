@@ -90,15 +90,13 @@ const Onboarding: React.FC<OnboardingProps> = ({ onModelSelected }) => {
 
   return (
     <div className="h-screen w-screen flex flex-col p-6 gap-4 inset-0">
-      {import.meta.env.DEV && (
-        <button
-          onClick={onModelSelected}
-          className="absolute top-4 right-4 z-50 text-[11px] font-mono tracking-wider uppercase text-spokn-text-3 hover:text-spokn-text-2 border border-spokn-hairline rounded-md px-2.5 py-1 bg-spokn-surface/60 hover:bg-spokn-surface transition-colors"
-        >
-          {/* eslint-disable-next-line i18next/no-literal-string */}
-          Dev · skip →
-        </button>
-      )}
+      <button
+        onClick={onModelSelected}
+        className="absolute top-4 right-4 z-50 text-[11px] font-mono tracking-wider uppercase text-spokn-text-3 hover:text-spokn-text-2 border border-spokn-hairline rounded-md px-2.5 py-1 bg-spokn-surface/60 hover:bg-spokn-surface transition-colors"
+      >
+        {/* eslint-disable-next-line i18next/no-literal-string */}
+        Skip for now →
+      </button>
       <div className="flex flex-col items-center gap-2 shrink-0">
         <SpoknWordmark variant="hero" />
         <p className="text-text/70 max-w-md font-medium mx-auto">

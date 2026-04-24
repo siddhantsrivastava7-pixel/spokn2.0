@@ -307,15 +307,13 @@ const AccessibilityOnboarding: React.FC<AccessibilityOnboardingProps> = ({
   // Show permissions request screen
   return (
     <div className="h-screen w-screen flex flex-col p-6 gap-6 items-center justify-center">
-      {import.meta.env.DEV && (
-        <button
-          onClick={() => completeOnboarding()}
-          className="absolute top-4 right-4 text-[11px] font-mono tracking-wider uppercase text-spokn-text-3 hover:text-spokn-text-2 border border-spokn-hairline rounded-md px-2.5 py-1 bg-spokn-surface/60 hover:bg-spokn-surface transition-colors"
-        >
-          {/* eslint-disable-next-line i18next/no-literal-string */}
-          Dev · skip →
-        </button>
-      )}
+      <button
+        onClick={() => completeOnboarding()}
+        className="absolute top-4 right-4 text-[11px] font-mono tracking-wider uppercase text-spokn-text-3 hover:text-spokn-text-2 border border-spokn-hairline rounded-md px-2.5 py-1 bg-spokn-surface/60 hover:bg-spokn-surface transition-colors"
+      >
+        {/* eslint-disable-next-line i18next/no-literal-string */}
+        Already granted · continue →
+      </button>
       <div className="flex flex-col items-center gap-2">
         <SpoknWordmark variant="hero" />
       </div>

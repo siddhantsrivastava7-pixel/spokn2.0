@@ -814,6 +814,12 @@ async isLaptop() : Promise<Result<boolean, string>> {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
 }
+},
+async detectHardware() : Promise<HardwareInfo> {
+    return await TAURI_INVOKE("detect_hardware");
+},
+async recommendModelForLanguages(languages: string[]) : Promise<string> {
+    return await TAURI_INVOKE("recommend_model_for_languages", { languages });
 }
 }
 
@@ -841,6 +847,7 @@ export type ClipboardHandling = "dont_modify" | "copy_to_clipboard"
 export type CustomSounds = { start: boolean; stop: boolean }
 export type EngineType = "Whisper" | "Parakeet" | "Moonshine" | "MoonshineStreaming" | "SenseVoice" | "GigaAM" | "Canary" | "Cohere"
 export type GpuDeviceOption = { id: number; name: string; total_vram_mb: number }
+export type HardwareInfo = { platform: string; arch: string; ram_gb: number; is_apple_silicon: boolean; tier: string }
 export type HistoryEntry = { id: number; file_name: string; timestamp: number; saved: boolean; title: string; transcription_text: string; post_processed_text: string | null; post_process_prompt: string | null; post_process_requested: boolean }
 export type HistoryUpdatePayload = { action: "added"; entry: HistoryEntry } | { action: "updated"; entry: HistoryEntry } | { action: "deleted"; id: number } | { action: "toggled"; id: number }
 /**

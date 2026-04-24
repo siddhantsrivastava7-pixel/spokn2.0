@@ -156,26 +156,26 @@
       "noSettingsNeeded": "This model works automatically with no configuration needed."
     },
     "general": {
-      "title": "General",
+      "title": "Recording",
       "shortcut": {
-        "title": "Spokn Shortcuts",
-        "description": "Configure keyboard shortcuts to trigger speech-to-text recording",
+        "title": "Shortcuts",
+        "description": "Keys you press to start and stop recording.",
         "loading": "Loading shortcuts...",
-        "none": "No shortcuts configured",
+        "none": "No shortcut set",
         "notFound": "Shortcut not found",
         "pressKeys": "Press keys...",
         "bindings": {
           "transcribe": {
-            "name": "Transcribe Shortcut",
-            "description": "The keyboard shortcut to record and transcribe your voice."
+            "name": "Start recording",
+            "description": "Press this to begin speaking. Spokn types what it hears wherever your cursor is."
           },
           "cancel": {
-            "name": "Cancel Shortcut",
-            "description": "The keyboard shortcut to cancel the current recording."
+            "name": "Throw away recording",
+            "description": "Press this mid-sentence if you mess up. Nothing gets typed."
           },
           "transcribe_with_post_process": {
-            "name": "Post-Processing Hotkey",
-            "description": "Optional: A dedicated hotkey that always applies AI post-processing to your transcription."
+            "name": "Record with AI cleanup",
+            "description": "Optional second shortcut. Records as usual, then runs your transcription through AI post-processing before typing it out."
           }
         },
         "errors": {
@@ -193,8 +193,8 @@
         "auto": "Auto"
       },
       "pushToTalk": {
-        "label": "Push To Talk",
-        "description": "Hold to record, release to stop"
+        "label": "Hold to talk",
+        "description": "On: hold the shortcut down while you speak — release to transcribe. Off: tap the shortcut to start, tap again to stop."
       }
     },
     "models": {
@@ -216,26 +216,26 @@
       "noModelsMatch": "No models match this filter."
     },
     "sound": {
-      "title": "Sound",
+      "title": "Microphone & audio",
       "microphone": {
         "title": "Microphone",
-        "description": "Select your preferred microphone device",
+        "description": "Which mic Spokn listens on. Use your default, or pick a specific headset.",
         "placeholder": "Select microphone...",
         "loading": "Loading..."
       },
       "audioFeedback": {
-        "label": "Audio Feedback",
-        "description": "Play sound when recording starts and stops"
+        "label": "Play a chime on start/stop",
+        "description": "A subtle beep confirms when recording begins and ends so you never wonder if it's listening."
       },
       "outputDevice": {
-        "title": "Output Device",
-        "description": "Select your preferred audio output device for feedback sounds",
+        "title": "Chime plays on",
+        "description": "Which speakers or headphones play the start/stop beep.",
         "placeholder": "Select output device...",
         "loading": "Loading..."
       },
       "volume": {
-        "title": "Volume",
-        "description": "Adjust the volume of audio feedback sounds"
+        "title": "Chime volume",
+        "description": "How loud the start/stop beep is."
       }
     },
     "advanced": {
@@ -483,8 +483,8 @@
         "description": "Enable AI-powered text refinement after transcription"
       },
       "muteWhileRecording": {
-        "label": "Mute While Recording",
-        "description": "Mute system audio during recording"
+        "label": "Silence other audio while recording",
+        "description": "Pauses videos, music, and system sounds while you speak so the mic doesn't pick them up."
       },
       "appendTrailingSpace": {
         "label": "Append Trailing Space",

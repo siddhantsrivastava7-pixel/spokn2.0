@@ -12,6 +12,8 @@ import "./App.css";
 import AccessibilityPermissions from "./components/AccessibilityPermissions";
 import Footer from "./components/footer";
 import Onboarding, { AccessibilityOnboarding } from "./components/onboarding";
+import LanguageOnboarding from "./components/onboarding/LanguageOnboarding";
+import ModelDownloading from "./components/onboarding/ModelDownloading";
 import { Sidebar, SidebarSection, SECTIONS_CONFIG } from "./components/Sidebar";
 import QuickSettings from "./components/QuickSettings";
 import { Zap } from "lucide-react";
@@ -20,7 +22,12 @@ import { useSettingsStore } from "./stores/settingsStore";
 import { commands } from "@/bindings";
 import { getLanguageDirection, initializeRTL } from "@/lib/utils/rtl";
 
-type OnboardingStep = "accessibility" | "model" | "done";
+type OnboardingStep =
+  | "accessibility"
+  | "language"
+  | "downloading"
+  | "model"
+  | "done";
 
 const renderSettingsContent = (section: SidebarSection) => {
   const ActiveComponent =
@@ -39,6 +46,9 @@ function App() {
   const [currentSection, setCurrentSection] =
     useState<SidebarSection>("general");
   const [quickSettingsOpen, setQuickSettingsOpen] = useState(false);
+  const [recommendedModelId, setRecommendedModelId] = useState<string | null>(
+    null,
+  );
   const { settings, updateSetting } = useSettings();
   const direction = getLanguageDirection(i18n.language);
   const refreshAudioDevices = useSettingsStore(
@@ -227,13 +237,22 @@ function App() {
   };
 
   const handleAccessibilityComplete = () => {
-    // Returning users already have models, skip to main app
-    // New users need to select a model
-    setOnboardingStep(isReturningUser ? "done" : "model");
+    // Returning users already have models, skip to main app.
+    // New users go through the language picker → auto download.
+    setOnboardingStep(isReturningUser ? "done" : "language");
+  };
+
+  const handleLanguagesPicked = (modelId: string) => {
+    setRecommendedModelId(modelId);
+    setOnboardingStep("downloading");
+  };
+
+  const handleDownloadComplete = () => {
+    setOnboardingStep("done");
   };
 
   const handleModelSelected = () => {
-    // Transition to main app - user has started a download
+    // Legacy manual flow (Skip-for-now on the old model screen)
     setOnboardingStep("done");
   };
 
@@ -244,6 +263,19 @@ function App() {
 
   if (onboardingStep === "accessibility") {
     return <AccessibilityOnboarding onComplete={handleAccessibilityComplete} />;
+  }
+
+  if (onboardingStep === "language") {
+    return <LanguageOnboarding onComplete={handleLanguagesPicked} />;
+  }
+
+  if (onboardingStep === "downloading" && recommendedModelId) {
+    return (
+      <ModelDownloading
+        modelId={recommendedModelId}
+        onComplete={handleDownloadComplete}
+      />
+    );
   }
 
   if (onboardingStep === "model") {

@@ -3,8 +3,14 @@ import { useTranslation } from "react-i18next";
 import { Slider } from "../ui/Slider";
 import { useSettings } from "../../hooks/useSettings";
 
-export const VolumeSlider: React.FC<{ disabled?: boolean }> = ({
+interface VolumeSliderProps {
+  disabled?: boolean;
+  descriptionMode?: "inline" | "tooltip";
+}
+
+export const VolumeSlider: React.FC<VolumeSliderProps> = ({
   disabled = false,
+  descriptionMode = "tooltip",
 }) => {
   const { t } = useTranslation();
   const { getSetting, updateSetting } = useSettings();
@@ -20,7 +26,7 @@ export const VolumeSlider: React.FC<{ disabled?: boolean }> = ({
       max={1}
       label={t("settings.sound.volume.title")}
       description={t("settings.sound.volume.description")}
-      descriptionMode="tooltip"
+      descriptionMode={descriptionMode}
       grouped
       formatValue={(value) => `${Math.round(value * 100)}%`}
       disabled={disabled}

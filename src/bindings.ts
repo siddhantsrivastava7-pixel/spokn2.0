@@ -820,6 +820,30 @@ async detectHardware() : Promise<HardwareInfo> {
 },
 async recommendModelForLanguages(languages: string[]) : Promise<string> {
     return await TAURI_INVOKE("recommend_model_for_languages", { languages });
+},
+async changeSmartFormattingEnabledSetting(enabled: boolean) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("change_smart_formatting_enabled_setting", { enabled }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async changeSmartFormattingModeSetting(mode: SmartFormattingMode) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("change_smart_formatting_mode_setting", { mode }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async changeSmartFormattingAppAwareSetting(enabled: boolean) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("change_smart_formatting_app_aware_setting", { enabled }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
 }
 }
 

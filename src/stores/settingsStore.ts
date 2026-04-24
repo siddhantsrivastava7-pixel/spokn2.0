@@ -6,6 +6,7 @@ import type {
   AudioDevice,
   WhisperAcceleratorSetting,
   OrtAcceleratorSetting,
+  SmartFormattingMode,
 } from "@/bindings";
 import { commands } from "@/bindings";
 
@@ -155,6 +156,12 @@ const settingUpdaters: {
     commands.changeWhisperGpuDevice(value as number),
   extra_recording_buffer_ms: (value) =>
     commands.changeExtraRecordingBufferSetting(value as number),
+  smart_formatting_enabled: (value) =>
+    commands.changeSmartFormattingEnabledSetting(value as boolean),
+  smart_formatting_mode: (value) =>
+    commands.changeSmartFormattingModeSetting(value as SmartFormattingMode),
+  smart_formatting_app_aware: (value) =>
+    commands.changeSmartFormattingAppAwareSetting(value as boolean),
 };
 
 export const useSettingsStore = create<SettingsStore>()(

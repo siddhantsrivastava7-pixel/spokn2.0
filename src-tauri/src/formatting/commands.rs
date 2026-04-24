@@ -64,22 +64,53 @@ pub fn apply_spoken_punctuation(text: &str) -> String {
 /// replacement phrase, keep the correction. We only act when the pattern is
 /// unambiguous — otherwise the original text survives.
 pub fn apply_corrections(text: &str) -> String {
-    static CORRECTION: Lazy<Regex> = Lazy::new(|| {
-        // Capture: [prior clause] MARKER [replacement clause]
-        // The marker must be comma-flanked or at a natural clause boundary.
-        Regex::new(
-            r"(?i)([^,.!?\n]+?)(?:[,\s]+)(no\s+wait|sorry|i\s+mean|scratch\s+that|actually)(?:[,\s]+)([^,.!?\n]+)",
-        )
-        .unwrap()
+    // Marker can include embedded commas that Whisper loves to insert, e.g.
+    // "No, wait" or "I, mean".
+    const MARKER: &str = r"(?:no\s*,?\s*wait|sorry|scratch\s+that|i\s+mean)";
+
+    // 1. Sentence-spanning correction:
+    //    "[full prior sentence]. [MARKER][, ]? [replacement]"
+    //    → just the replacement.
+    static SENTENCE_CORRECTION: Lazy<Regex> = Lazy::new(|| {
+        let pat = format!(
+            r"(?i)[^.!?\n]+[.!?]+\s*{}\s*[,]?\s*([^.!?\n]+[.!?]?)",
+            MARKER
+        );
+        Regex::new(&pat).unwrap()
     });
 
-    // Iterate until stable (handles chained corrections).
+    // 2. Inline correction within a single clause:
+    //    "prior , MARKER , replacement"  →  replacement
+    static INLINE_CORRECTION: Lazy<Regex> = Lazy::new(|| {
+        let pat = format!(
+            r"(?i)([^,.!?\n]+?)[,\s]+{}[,\s]+([^,.!?\n]+)",
+            MARKER
+        );
+        Regex::new(&pat).unwrap()
+    });
+
+    // Apply sentence-level first (bigger span), then inline (narrower).
+    // Loop each until stable so chained corrections collapse.
     let mut prev = text.to_string();
     loop {
-        let replaced = CORRECTION
-            .replace(&prev, |caps: &regex::Captures| {
-                // Drop the first clause + marker, keep only the replacement.
-                caps.get(3).map(|m| m.as_str().trim().to_string()).unwrap_or_default()
+        let replaced = SENTENCE_CORRECTION
+            .replace_all(&prev, |caps: &regex::Captures| {
+                caps.get(1)
+                    .map(|m| m.as_str().trim().to_string())
+                    .unwrap_or_default()
+            })
+            .to_string();
+        if replaced == prev {
+            break;
+        }
+        prev = replaced;
+    }
+    loop {
+        let replaced = INLINE_CORRECTION
+            .replace_all(&prev, |caps: &regex::Captures| {
+                caps.get(2)
+                    .map(|m| m.as_str().trim().to_string())
+                    .unwrap_or_default()
             })
             .to_string();
         if replaced == prev {
@@ -134,6 +165,27 @@ mod tests {
     fn no_correction_when_no_marker() {
         let out = apply_corrections("my name is Raj");
         assert_eq!(out, "my name is Raj");
+    }
+
+    #[test]
+    fn correction_across_sentence_boundary() {
+        // Whisper splits "no wait" as a fresh sentence after a period.
+        // The correction should still collapse.
+        let out = apply_corrections(
+            "Let's meet at the office. No wait, let's meet at the cafe instead.",
+        );
+        assert!(out.to_lowercase().contains("cafe"), "got: {}", out);
+        assert!(!out.to_lowercase().contains("office"), "got: {}", out);
+    }
+
+    #[test]
+    fn correction_handles_comma_split_marker() {
+        // Whisper sometimes inserts a comma between "No" and "wait".
+        let out = apply_corrections(
+            "Let's meet at the office. No, wait, let's meet at the cafe.",
+        );
+        assert!(out.to_lowercase().contains("cafe"), "got: {}", out);
+        assert!(!out.to_lowercase().contains("office"), "got: {}", out);
     }
 
     #[test]

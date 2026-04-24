@@ -97,7 +97,12 @@ fn list_pipeline(text: &str, cfg: &FormattingConfig) -> String {
     }
     items
         .into_iter()
-        .map(|item| format!("- {}", capitalize_first(&item)))
+        .map(|item| {
+            // Strip trailing punctuation that bleeds over from speech cadence —
+            // "- Milk." or "- Bread," read noisy. Keep internal punctuation.
+            let trimmed = item.trim_end_matches(|c: char| matches!(c, ',' | '.' | ';' | ':'));
+            format!("- {}", capitalize_first(trimmed))
+        })
         .collect::<Vec<_>>()
         .join("\n")
 }

@@ -58,15 +58,17 @@ fn detect_email(text: &str) -> Option<Intent> {
 }
 
 fn detect_list(text: &str) -> Option<Intent> {
+    // List intent triggers ONLY at the start of the utterance (±leading ws).
+    // Mid-sentence "grocery list" is likely conversational, not an intent.
     static RE: Lazy<Regex> = Lazy::new(|| {
         Regex::new(
-            r"(?i)\b(grocery\s+list|shopping\s+list|todo\s+list|to\s+do\s+list|points\s+are|items\s+are)\b[:.]?\s*",
+            r"(?i)^\s*(grocery\s+list|shopping\s+list|todo\s+list|to\s+do\s+list|points\s+are|items\s+are)\b[:.]?\s*",
         )
         .unwrap()
     });
-    // Ordinal-led lists: "first X second Y third Z" — need at least two ordinals.
+    // Ordinal-led lists: utterance must BEGIN with "first" (not contain it).
     static RE_ORDINAL: Lazy<Regex> = Lazy::new(|| {
-        Regex::new(r"(?i)\bfirst\b.+?\bsecond\b").unwrap()
+        Regex::new(r"(?i)^\s*first\b.+?\bsecond\b").unwrap()
     });
 
     if let Some(caps) = RE.captures(text) {
@@ -80,8 +82,11 @@ fn detect_list(text: &str) -> Option<Intent> {
 }
 
 fn detect_note(text: &str) -> Option<Intent> {
+    // Anchored to utterance start. Previously a mid-sentence "action items"
+    // would swallow everything before it — breaking "…new paragraph. Action
+    // items are next." utterances.
     static RE: Lazy<Regex> = Lazy::new(|| {
-        Regex::new(r"(?i)\b(note\s+that|meeting\s+notes|action\s+items)\b[:.]?\s*").unwrap()
+        Regex::new(r"(?i)^\s*(note\s+that|meeting\s+notes|action\s+items)\b[:.]?\s*").unwrap()
     });
     RE.captures(text).map(|caps| Intent::Note {
         body_start: caps.get(0).map(|m| m.end()).unwrap_or(0),
@@ -188,6 +193,31 @@ mod tests {
     #[test]
     fn no_intent_on_plain_text() {
         assert_eq!(detect("just a regular sentence"), Intent::None);
+    }
+
+    #[test]
+    fn note_intent_not_greedy_mid_utterance() {
+        // Previously "action items" anywhere triggered Note intent and
+        // swallowed everything before it. Must anchor to utterance start.
+        assert_eq!(
+            detect("Meeting went well. We agreed on Q2 targets. Action items are next."),
+            Intent::None
+        );
+    }
+
+    #[test]
+    fn list_intent_requires_utterance_start() {
+        // "grocery list" mid-sentence should not trigger list mode.
+        assert_eq!(detect("I put the grocery list on the counter"), Intent::None);
+    }
+
+    #[test]
+    fn ordinal_list_requires_leading_first() {
+        // "first" mid-sentence shouldn't trigger ordinal list mode.
+        assert_eq!(
+            detect("we won the first prize, second place, and third try"),
+            Intent::None
+        );
     }
 
     #[test]

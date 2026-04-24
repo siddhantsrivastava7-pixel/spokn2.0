@@ -430,6 +430,9 @@ pub fn run(cli_args: CliArgs) {
             commands::history::update_recording_retention_period,
             commands::onboarding::detect_hardware,
             commands::onboarding::recommend_model_for_languages,
+            shortcut::change_smart_formatting_enabled_setting,
+            shortcut::change_smart_formatting_mode_setting,
+            shortcut::change_smart_formatting_app_aware_setting,
             helpers::clamshell::is_laptop,
         ])
         .events(collect_events![managers::history::HistoryUpdatePayload,]);

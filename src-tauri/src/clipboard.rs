@@ -659,6 +659,11 @@ pub fn paste(text: String, app_handle: AppHandle) -> Result<(), String> {
             .map_err(|e| format!("Failed to copy to clipboard: {}", e))?;
     }
 
+    // Kick off the learn-from-corrections session. If the user edits the
+    // text in the focused field within 30s, the resulting substitutions
+    // are appended to settings.custom_words for Whisper to bias on.
+    crate::correction_capture::start_capture_session(app_handle.clone(), text.clone());
+
     Ok(())
 }
 

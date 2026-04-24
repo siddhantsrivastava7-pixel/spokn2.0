@@ -1092,6 +1092,81 @@ pub fn change_smart_formatting_app_aware_setting(app: AppHandle, enabled: bool) 
 
 #[tauri::command]
 #[specta::specta]
+pub fn add_snippet(app: AppHandle, trigger: String, expansion: String) -> Result<String, String> {
+    let trimmed_trigger = trigger.trim().to_string();
+    if trimmed_trigger.is_empty() || expansion.is_empty() {
+        return Err("Trigger and expansion must both be non-empty".into());
+    }
+    let mut settings = settings::get_settings(&app);
+    // Reject duplicate triggers (case-insensitive).
+    if settings
+        .snippets
+        .iter()
+        .any(|s| s.trigger.eq_ignore_ascii_case(&trimmed_trigger))
+    {
+        return Err(format!("A snippet for \"{}\" already exists", trimmed_trigger));
+    }
+    let id = format!("snip_{}", chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0));
+    let snippet = settings::Snippet {
+        id: id.clone(),
+        trigger: trimmed_trigger,
+        expansion,
+        hits: 0,
+        created_at: chrono::Utc::now().timestamp(),
+    };
+    settings.snippets.push(snippet);
+    settings::write_settings(&app, settings);
+    Ok(id)
+}
+
+#[tauri::command]
+#[specta::specta]
+pub fn update_snippet(
+    app: AppHandle,
+    id: String,
+    trigger: String,
+    expansion: String,
+) -> Result<(), String> {
+    let trimmed_trigger = trigger.trim().to_string();
+    if trimmed_trigger.is_empty() || expansion.is_empty() {
+        return Err("Trigger and expansion must both be non-empty".into());
+    }
+    let mut settings = settings::get_settings(&app);
+    // Reject trigger collision with OTHER snippets.
+    if settings
+        .snippets
+        .iter()
+        .any(|s| s.id != id && s.trigger.eq_ignore_ascii_case(&trimmed_trigger))
+    {
+        return Err(format!("A snippet for \"{}\" already exists", trimmed_trigger));
+    }
+    let found = settings.snippets.iter_mut().find(|s| s.id == id);
+    match found {
+        Some(s) => {
+            s.trigger = trimmed_trigger;
+            s.expansion = expansion;
+            settings::write_settings(&app, settings);
+            Ok(())
+        }
+        None => Err(format!("Snippet {} not found", id)),
+    }
+}
+
+#[tauri::command]
+#[specta::specta]
+pub fn delete_snippet(app: AppHandle, id: String) -> Result<(), String> {
+    let mut settings = settings::get_settings(&app);
+    let before = settings.snippets.len();
+    settings.snippets.retain(|s| s.id != id);
+    if settings.snippets.len() == before {
+        return Err(format!("Snippet {} not found", id));
+    }
+    settings::write_settings(&app, settings);
+    Ok(())
+}
+
+#[tauri::command]
+#[specta::specta]
 pub fn change_lazy_stream_close_setting(app: AppHandle, enabled: bool) -> Result<(), String> {
     let mut settings = settings::get_settings(&app);
     settings.lazy_stream_close = enabled;

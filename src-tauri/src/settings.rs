@@ -93,6 +93,20 @@ pub struct LLMPrompt {
     pub prompt: String,
 }
 
+/// A text snippet. When the user speaks the `trigger`, Spokn expands it
+/// into `expansion` before the text is injected. Case-insensitive
+/// word-boundary match; longer triggers beat shorter ones.
+#[derive(Serialize, Deserialize, Debug, Clone, Type)]
+pub struct Snippet {
+    pub id: String,
+    pub trigger: String,
+    pub expansion: String,
+    #[serde(default)]
+    pub hits: u32,
+    #[serde(default)]
+    pub created_at: i64,
+}
+
 #[derive(Serialize, Deserialize, Debug, Clone, Type)]
 pub struct PostProcessProvider {
     pub id: String,
@@ -436,6 +450,8 @@ pub struct AppSettings {
     pub smart_formatting_mode: SmartFormattingMode,
     #[serde(default = "default_smart_formatting_app_aware")]
     pub smart_formatting_app_aware: bool,
+    #[serde(default)]
+    pub snippets: Vec<Snippet>,
 }
 
 /// Mirror of `crate::formatting::FormattingMode` that lives in the settings
@@ -859,6 +875,7 @@ pub fn get_default_settings() -> AppSettings {
         smart_formatting_enabled: default_smart_formatting_enabled(),
         smart_formatting_mode: SmartFormattingMode::default(),
         smart_formatting_app_aware: default_smart_formatting_app_aware(),
+        snippets: Vec::new(),
     }
 }
 

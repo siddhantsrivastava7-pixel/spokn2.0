@@ -402,6 +402,31 @@ pub(crate) async fn process_transcription_output(
         }
     }
 
+    // Snippet expansion — runs AFTER Smart Formatting so URLs, emails and
+    // signatures inside expansions survive unchanged. Bumps hit counter on
+    // each matched snippet so UI can rank most-used ones.
+    if !settings.snippets.is_empty() {
+        let (expanded, hit_ids) = crate::snippets::apply(&final_text, &settings.snippets);
+        if expanded != final_text {
+            if post_processed_text.is_none() {
+                post_processed_text = Some(expanded.clone());
+            }
+            final_text = expanded;
+            // Persist hit counts back to the store. Fire-and-forget: if
+            // the write fails, the UI still renders; we just won't rank
+            // snippets accurately.
+            if !hit_ids.is_empty() {
+                let mut updated = settings.clone();
+                for snip in updated.snippets.iter_mut() {
+                    if hit_ids.contains(&snip.id) {
+                        snip.hits = snip.hits.saturating_add(1);
+                    }
+                }
+                crate::settings::write_settings(app, updated);
+            }
+        }
+    }
+
     ProcessedTranscription {
         final_text,
         post_processed_text,

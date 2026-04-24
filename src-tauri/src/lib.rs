@@ -6,10 +6,12 @@ pub mod audio_toolkit;
 pub mod cli;
 mod clipboard;
 mod commands;
+mod correction_capture;
 mod formatting;
 mod hardware;
 mod helpers;
 mod model_recommend;
+mod snippets;
 mod input;
 mod llm_client;
 mod managers;
@@ -433,6 +435,9 @@ pub fn run(cli_args: CliArgs) {
             shortcut::change_smart_formatting_enabled_setting,
             shortcut::change_smart_formatting_mode_setting,
             shortcut::change_smart_formatting_app_aware_setting,
+            shortcut::add_snippet,
+            shortcut::update_snippet,
+            shortcut::delete_snippet,
             helpers::clamshell::is_laptop,
         ])
         .events(collect_events![managers::history::HistoryUpdatePayload,]);

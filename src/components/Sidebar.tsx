@@ -1,6 +1,6 @@
 import React from "react";
 import { useTranslation } from "react-i18next";
-import { Cog, FlaskConical, History, Info, Sparkles, Cpu, Mic } from "lucide-react";
+import { Cog, FlaskConical, History, Info, Sparkles, Cpu, Mic, Zap } from "lucide-react";
 import SpoknWordmark from "./icons/SpoknWordmark";
 import { useSettings } from "../hooks/useSettings";
 import {
@@ -11,6 +11,7 @@ import {
   AboutSettings,
   PostProcessingSettings,
   ModelsSettings,
+  SnippetsSettings,
 } from "./settings";
 
 export type SidebarSection = keyof typeof SECTIONS_CONFIG;
@@ -41,6 +42,12 @@ export const SECTIONS_CONFIG = {
     labelKey: "sidebar.models",
     icon: Cpu,
     component: ModelsSettings,
+    enabled: () => true,
+  },
+  snippets: {
+    labelKey: "sidebar.snippets",
+    icon: Zap,
+    component: SnippetsSettings,
     enabled: () => true,
   },
   advanced: {

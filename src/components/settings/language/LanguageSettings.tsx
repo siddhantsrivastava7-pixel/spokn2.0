@@ -99,7 +99,7 @@ export const LanguageSettings: React.FC = () => {
       toast.error(`Couldn't download ${target.name}`, {
         // eslint-disable-next-line i18next/no-literal-string
         description:
-          "Your current model is still active. Try again from Settings → Models, or check your internet connection.",
+          "Your current model is still active. Check your internet connection and try changing the language again.",
       });
     }
   };
@@ -127,7 +127,7 @@ export const LanguageSettings: React.FC = () => {
       toast.warning(`${active.name} doesn't support: ${missing.join(", ")}`, {
         // eslint-disable-next-line i18next/no-literal-string
         description:
-          "Pick a multilingual model in Settings → Models, or remove the unsupported language(s).",
+          "Try removing the unsupported language(s) from your list, or switch to Advanced mode in the sidebar to manage models manually.",
         duration: 10000,
       });
     }

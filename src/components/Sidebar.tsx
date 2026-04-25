@@ -81,11 +81,15 @@ export const SECTIONS_CONFIG = {
     simple: true,
   },
   models: {
+    // Power-user only. Normal users have the right model picked
+    // automatically (onboarding + LanguageSettings auto-switch).
+    // Hiding this from the simple sidebar removes the "I picked the
+    // wrong model and now transcription is bad" footgun entirely.
     labelKey: "sidebar.models",
     icon: Cpu,
     component: ModelsSettings,
     enabled: () => true,
-    simple: true,
+    simple: false,
   },
   snippets: {
     labelKey: "sidebar.snippets",

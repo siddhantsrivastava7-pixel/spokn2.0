@@ -236,7 +236,7 @@ function App() {
         toast.info(`Switched model: '${stale_id || "(none)"}' → '${new_id}'`, {
           // eslint-disable-next-line i18next/no-literal-string
           description:
-            "Your saved model wasn't available; using a downloaded one instead. Pick a different model in Settings → Models if you'd prefer.",
+            "Your saved model wasn't available; using a downloaded one instead. Spokn picks the best model for your languages automatically.",
           duration: 8000,
         });
       } else {
@@ -244,7 +244,7 @@ function App() {
         toast.error("No transcription model installed", {
           // eslint-disable-next-line i18next/no-literal-string
           description:
-            "Open Settings → Models and download one to start transcribing.",
+            "Add a language in Settings → Language and Spokn will download the right model automatically.",
           duration: 12000,
         });
       }

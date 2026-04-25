@@ -210,6 +210,29 @@ mod integration_tests {
     }
 
     #[test]
+    fn email_with_correction_in_body_keeps_envelope() {
+        // Regression: "Email to Raj saying X. No wait, Y." used to be
+        // mauled by sentence-level correction running BEFORE intent
+        // detection, eating "Email to Raj saying X" along with the
+        // marker. Intent detection now runs first; corrections inside
+        // the body are inline-only.
+        let out = format(
+            "Email to Raj saying send fifty rupees no wait, send five hundred rupees",
+            &cfg(FormattingMode::Smart),
+            &ctx(),
+        );
+        assert!(out.starts_with("Hi Raj"), "envelope lost: {}", out);
+        assert!(out.contains("Best regards"), "sign-off lost: {}", out);
+        assert!(out.contains("\u{20B9}500"), "replacement currency lost: {}", out);
+        // The discarded prior amount (50) should not appear as currency.
+        assert!(
+            !out.contains("\u{20B9}50."),
+            "discarded prior survived: {}",
+            out
+        );
+    }
+
+    #[test]
     fn list_mode_ordinal() {
         let out = format(
             "first buy milk second pick up laundry third call mom",

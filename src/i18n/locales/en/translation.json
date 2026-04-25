@@ -10,13 +10,57 @@
   },
   "sidebar": {
     "general": "General",
-    "models": "Models",
+    "voiceAudio": "Voice & Audio",
+    "behavior": "Behavior",
+    "models": "Speech Model",
     "snippets": "Snippets",
-    "advanced": "Advanced",
+    "advanced": "Settings",
     "postProcessing": "Post Process",
     "history": "History",
     "debug": "Debug",
-    "about": "About"
+    "about": "About",
+    "modeSimple": "Simple",
+    "modeAdvanced": "Advanced"
+  },
+  "simplified": {
+    "general": {
+      "title": "General",
+      "modeLabel": "Mode",
+      "modeHold": "Hold to talk",
+      "modeTap": "Tap to start/stop",
+      "modeHoldHint": "Hold the shortcut while you speak.",
+      "modeTapHint": "Tap once to start, tap again to stop."
+    },
+    "voiceAudio": {
+      "title": "Voice & Audio",
+      "playSound": "Play sound on start/stop",
+      "playSoundHint": "A subtle chime when recording begins and ends."
+    },
+    "behavior": {
+      "title": "Behavior",
+      "startOnLogin": "Start on login",
+      "startOnLoginHint": "Open Spokn automatically when you sign in.",
+      "runInBackground": "Keep running in background",
+      "runInBackgroundHint": "Stays in the menu bar after you close the window.",
+      "autoSend": "Auto-send messages",
+      "autoSendHint": "Press Enter automatically after each transcription."
+    },
+    "advancedPage": {
+      "title": "Settings",
+      "intro": "Power-user controls. Most people don't need to touch these.",
+      "groups": {
+        "recording": "Recording",
+        "output": "Output",
+        "audio": "Audio feedback",
+        "microphone": "Microphone",
+        "memory": "Memory & performance",
+        "overlay": "Overlay",
+        "files": "Files & data",
+        "ai": "AI cleanup",
+        "language": "Interface language",
+        "experimental": "Experimental"
+      }
+    }
   },
   "onboarding": {
     "subtitle": "To get started, choose a transcription model",

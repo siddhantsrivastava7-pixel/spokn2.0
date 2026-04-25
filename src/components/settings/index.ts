@@ -1,5 +1,7 @@
 // Settings section components
 export { GeneralSettings } from "./general/GeneralSettings";
+export { VoiceAudioSettings } from "./voice-audio/VoiceAudioSettings";
+export { BehaviorSettings } from "./behavior/BehaviorSettings";
 export { AdvancedSettings } from "./advanced/AdvancedSettings";
 export { DebugSettings } from "./debug/DebugSettings";
 export { HistorySettings } from "./history/HistorySettings";

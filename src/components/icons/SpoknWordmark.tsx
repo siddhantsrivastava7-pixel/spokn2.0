@@ -1,27 +1,24 @@
 import React from "react";
+import spoknMark from "@/assets/spokn-mark.png";
 
 interface SpoknWordmarkProps {
   className?: string;
-  /** Orb diameter in px. Text size scales from this. */
+  /** Mark diameter in px. Text size scales from this. */
   size?: number;
   variant?: "sidebar" | "hero";
 }
 
-/* Gradient orb + "Spokn" wordmark. Two sizes:
- *   - sidebar  (default 16): the tiny header variant used in the nav
- *   - hero     (default 40): the big onboarding/logo variant */
+/* Spokn logo (image) + "Spokn" wordmark. Two sizes:
+ *   - sidebar  (default 18): the small header variant used in the nav
+ *   - hero     (default 44): the big onboarding/about variant */
 const SpoknWordmark: React.FC<SpoknWordmarkProps> = ({
   className,
   size,
   variant = "sidebar",
 }) => {
-  const orbSize = size ?? (variant === "hero" ? 40 : 16);
+  const markSize = size ?? (variant === "hero" ? 44 : 18);
   const fontSize = variant === "hero" ? 40 : 15;
   const gap = variant === "hero" ? 14 : 8;
-  const glow =
-    variant === "hero"
-      ? "0 0 0 1px rgba(255,255,255,0.08) inset, 0 8px 30px rgba(79,124,255,0.45)"
-      : "0 0 0 1px rgba(255,255,255,0.06) inset, 0 4px 12px rgba(79,124,255,0.35)";
 
   return (
     <div
@@ -33,20 +30,24 @@ const SpoknWordmark: React.FC<SpoknWordmarkProps> = ({
         color: "var(--color-spokn-text)",
       }}
     >
-      <span
+      <img
+        src={spoknMark}
+        alt=""
         aria-hidden
+        width={markSize}
+        height={markSize}
         style={{
-          width: orbSize,
-          height: orbSize,
-          borderRadius: 999,
-          background: "var(--spokn-accent-grad)",
-          boxShadow: glow,
+          width: markSize,
+          height: markSize,
+          display: "block",
+          // Keep the artwork crisp; no smoothing artefacts at small sizes.
+          imageRendering: "auto",
         }}
       />
       <span
         style={{
           fontFamily: "var(--spokn-font)",
-          fontWeight: variant === "hero" ? 600 : 600,
+          fontWeight: 600,
           fontSize,
           letterSpacing: variant === "hero" ? "-0.02em" : "-0.01em",
         }}

@@ -47,29 +47,36 @@ fn clean_pipeline(text: &str, cfg: &FormattingConfig) -> String {
 }
 
 /// Clean + numbers/currency + intent re-dispatch.
+///
+/// Detects intent on the *raw* text BEFORE applying corrections. Earlier
+/// versions ran `apply_corrections` first, which broke utterances like
+/// "Email to Raj saying X. No wait, Y" — the sentence-level correction
+/// regex would eat "Email to Raj saying X" along with the marker, losing
+/// the email envelope. By dispatching first, corrections then run inside
+/// the extracted body where only the inline (comma-bounded) variant fires.
 fn smart_pipeline(text: &str, cfg: &FormattingConfig, ctx: &FormattingContext) -> String {
-    // Detect intent on the raw-ish text (corrections applied so the heading
-    // isn't swallowed by a "no wait" marker).
-    let corrected = apply_corrections(text);
-    let intent_hit = intent::detect(&corrected);
+    let intent_hit = intent::detect(text);
 
     match intent_hit {
         Intent::Email { recipient, body_start } => {
-            let body = corrected.get(body_start..).unwrap_or(&corrected).trim();
+            let body = text.get(body_start..).unwrap_or(text).trim();
             email_pipeline(body, cfg, recipient)
         }
         Intent::List { body_start } => {
-            let body = corrected.get(body_start..).unwrap_or(&corrected).trim();
+            let body = text.get(body_start..).unwrap_or(text).trim();
             list_pipeline(body, cfg)
         }
         Intent::Note { body_start } => {
-            let body = corrected.get(body_start..).unwrap_or(&corrected).trim();
+            let body = text.get(body_start..).unwrap_or(text).trim();
             let cleaned = clean_pipeline(body, cfg);
             let digits = words_to_digits(&cleaned);
             currency::apply(&digits)
         }
         Intent::None => {
-            // Plain Smart: Clean + numbers/currency.
+            // No intent matched — apply corrections globally (sentence-level
+            // is fine here because there's no envelope to preserve), then
+            // clean + numbers + currency.
+            let corrected = apply_corrections(text);
             let cleaned = clean_pipeline(&corrected, cfg);
             let digits = words_to_digits(&cleaned);
             let withccy = currency::apply(&digits);

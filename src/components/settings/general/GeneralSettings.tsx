@@ -1,54 +1,68 @@
 import React from "react";
 import { useTranslation } from "react-i18next";
 import { type } from "@tauri-apps/plugin-os";
-import { MicrophoneSelector } from "../MicrophoneSelector";
 import { ShortcutInput } from "../ShortcutInput";
 import { SettingsGroup } from "../../ui/SettingsGroup";
-import { OutputDeviceSelector } from "../OutputDeviceSelector";
-import { PushToTalk } from "../PushToTalk";
-import { AudioFeedback } from "../AudioFeedback";
+import { SettingContainer } from "../../ui/SettingContainer";
+import { SegmentedControl } from "../../ui/SegmentedControl";
 import { useSettings } from "../../../hooks/useSettings";
-import { VolumeSlider } from "../VolumeSlider";
-import { MuteWhileRecording } from "../MuteWhileRecording";
-import { ModelSettingsCard } from "./ModelSettingsCard";
 
+/* Simplified General — just two controls.
+ *
+ * "Mode" replaces the engineer-y "Push To Talk" toggle with a clear
+ * binary segmented control. Cancel shortcut still surfaces inline when
+ * the user picks Tap mode (since release-to-stop no longer applies). */
 export const GeneralSettings: React.FC = () => {
   const { t } = useTranslation();
-  const { audioFeedbackEnabled, getSetting } = useSettings();
-  const pushToTalk = getSetting("push_to_talk");
+  const { getSetting, updateSetting } = useSettings();
   const isLinux = type() === "linux";
+  const pushToTalk = getSetting("push_to_talk") ?? true;
+  const mode: "hold" | "tap" = pushToTalk ? "hold" : "tap";
+
   return (
     <div className="max-w-3xl w-full mx-auto space-y-6">
-      <SettingsGroup title={t("settings.general.title")}>
+      <SettingsGroup title={t("simplified.general.title")}>
         <ShortcutInput
           shortcutId="transcribe"
           descriptionMode="inline"
           grouped={true}
         />
-        <PushToTalk descriptionMode="inline" grouped={true} />
-        {/* Cancel shortcut is hidden with push-to-talk (release key cancels) and on Linux (dynamic shortcut instability) */}
-        {!isLinux && !pushToTalk && (
+        <SettingContainer
+          title={t("simplified.general.modeLabel")}
+          description={
+            mode === "hold"
+              ? t("simplified.general.modeHoldHint")
+              : t("simplified.general.modeTapHint")
+          }
+          descriptionMode="inline"
+          grouped={true}
+        >
+          <SegmentedControl<"hold" | "tap">
+            value={mode}
+            onChange={(v) => updateSetting("push_to_talk", v === "hold")}
+            options={[
+              {
+                value: "hold",
+                label: t("simplified.general.modeHold"),
+              },
+              {
+                value: "tap",
+                label: t("simplified.general.modeTap"),
+              },
+            ]}
+            ariaLabel={t("simplified.general.modeLabel")}
+          />
+        </SettingContainer>
+        {/* Cancel shortcut only matters in Tap mode — in Hold mode, releasing
+         * the shortcut key already cancels. Linux suppressed because dynamic
+         * shortcut updates are unstable there. */}
+        {!isLinux && mode === "tap" && (
           <ShortcutInput
             shortcutId="cancel"
             descriptionMode="inline"
             grouped={true}
           />
         )}
-      </SettingsGroup>
-      <ModelSettingsCard />
-      <SettingsGroup title={t("settings.sound.title")}>
-        <MicrophoneSelector descriptionMode="inline" grouped={true} />
-        <MuteWhileRecording descriptionMode="inline" grouped={true} />
-        <AudioFeedback descriptionMode="inline" grouped={true} />
-        <OutputDeviceSelector
-          descriptionMode="inline"
-          grouped={true}
-          disabled={!audioFeedbackEnabled}
-        />
-        <VolumeSlider
-          descriptionMode="inline"
-          disabled={!audioFeedbackEnabled}
-        />
       </SettingsGroup>
     </div>
   );

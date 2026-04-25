@@ -5,12 +5,39 @@ import { ChevronDown, Globe } from "lucide-react";
 import type { ModelCardStatus } from "@/components/onboarding";
 import { ModelCard } from "@/components/onboarding";
 import { useModelStore } from "@/stores/modelStore";
+import { useSettings } from "@/hooks/useSettings";
 import { LANGUAGES } from "@/lib/constants/languages.ts";
 import type { ModelInfo } from "@/bindings";
 
 // check if model supports a language based on its supported_languages list
 const modelSupportsLanguage = (model: ModelInfo, langCode: string): boolean => {
   return model.supported_languages.includes(langCode);
+};
+
+/**
+ * Strict compatibility: returns the user's selected languages that the
+ * model does NOT support. Empty array = fully compatible. Used to grey
+ * out incompatible models in the picker so users don't shoot themselves
+ * in the foot by downloading a model that won't work for their actual
+ * dictation language.
+ */
+const findMissingLanguages = (
+  model: ModelInfo,
+  userLanguages: string[],
+): string[] => {
+  const supported = new Set(
+    model.supported_languages.map((l) => l.toLowerCase()),
+  );
+  return userLanguages
+    .map((l) => l.toLowerCase())
+    .filter((l) => l && l !== "auto" && !supported.has(l))
+    .map((code) => {
+      // Pretty label for the badge ("Hindi" not "hi") when we know it.
+      const label = LANGUAGES.find(
+        (lang) => lang.value.toLowerCase() === code,
+      )?.label;
+      return label || code;
+    });
 };
 
 export const ModelsSettings: React.FC = () => {
@@ -35,6 +62,9 @@ export const ModelsSettings: React.FC = () => {
     selectModel,
     deleteModel,
   } = useModelStore();
+  const { settings } = useSettings();
+  const userLanguages: string[] =
+    (settings as any)?.transcription_languages ?? [];
 
   // click outside handler for language dropdown
   useEffect(() => {
@@ -328,6 +358,7 @@ export const ModelsSettings: React.FC = () => {
                 downloadProgress={getDownloadProgress(model.id)}
                 downloadSpeed={getDownloadSpeed(model.id)}
                 showRecommended={false}
+                missingLanguages={findMissingLanguages(model, userLanguages)}
               />
             ))}
           </div>
@@ -350,6 +381,7 @@ export const ModelsSettings: React.FC = () => {
                   downloadProgress={getDownloadProgress(model.id)}
                   downloadSpeed={getDownloadSpeed(model.id)}
                   showRecommended={false}
+                  missingLanguages={findMissingLanguages(model, userLanguages)}
                 />
               ))}
             </div>

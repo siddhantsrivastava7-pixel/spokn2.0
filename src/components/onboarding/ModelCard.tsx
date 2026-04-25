@@ -54,6 +54,11 @@ interface ModelCardProps {
   downloadProgress?: number;
   downloadSpeed?: number; // MB/s
   showRecommended?: boolean;
+  /** Languages from the model's supported_languages that the user
+   *  has selected but the model does NOT support. When non-empty,
+   *  the card renders greyed out with a warning badge and the
+   *  download / select action is disabled. */
+  missingLanguages?: string[];
 }
 
 const ModelCard: React.FC<ModelCardProps> = ({
@@ -69,11 +74,19 @@ const ModelCard: React.FC<ModelCardProps> = ({
   downloadProgress,
   downloadSpeed,
   showRecommended = true,
+  missingLanguages = [],
 }) => {
   const { t } = useTranslation();
   const isFeatured = variant === "featured";
+  // A model that doesn't support all the user's selected languages is
+  // shown but not actionable — clicking through would just give them
+  // bad transcriptions for the unsupported language and they'd think
+  // the app was broken.
+  const isIncompatible = missingLanguages.length > 0;
+  const effectiveDisabled = disabled || isIncompatible;
   const isClickable =
-    status === "available" || status === "active" || status === "downloadable";
+    !isIncompatible &&
+    (status === "available" || status === "active" || status === "downloadable");
 
   // Get translated model name and description
   const displayName = getTranslatedModelName(model, t);
@@ -93,13 +106,14 @@ const ModelCard: React.FC<ModelCardProps> = ({
   };
 
   const getInteractiveClasses = () => {
+    if (isIncompatible) return "opacity-50 cursor-not-allowed";
     if (!isClickable) return "";
-    if (disabled) return "opacity-50 cursor-not-allowed";
+    if (effectiveDisabled) return "opacity-50 cursor-not-allowed";
     return "cursor-pointer hover:border-logo-primary/50 hover:bg-logo-primary/5 hover:shadow-lg hover:scale-[1.01] active:scale-[0.99] group";
   };
 
   const handleClick = () => {
-    if (!isClickable || disabled) return;
+    if (!isClickable || effectiveDisabled) return;
     if (status === "downloadable" && onDownload) {
       onDownload(model.id);
     } else {
@@ -155,6 +169,23 @@ const ModelCard: React.FC<ModelCardProps> = ({
                 <Loader2 className="w-3 h-3 mr-1 animate-spin" />
                 {t("modelSelector.switching")}
               </Badge>
+            )}
+            {isIncompatible && (
+              <span
+                className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-medium border"
+                style={{
+                  background: "rgba(244, 63, 94, 0.12)",
+                  borderColor: "rgba(244, 63, 94, 0.4)",
+                  color: "#fda4af",
+                }}
+                title={t("modelSelector.incompatibleTooltip", {
+                  langs: missingLanguages.join(", "),
+                  defaultValue: `Doesn't support: ${missingLanguages.join(", ")}. Choose a model that supports all your selected languages, or remove the missing language(s) from Settings → Language.`,
+                })}
+              >
+                {/* eslint-disable-next-line i18next/no-literal-string */}
+                {`Doesn't support: ${missingLanguages.join(", ")}`}
+              </span>
             )}
           </div>
           <p className="text-text/60 text-sm leading-relaxed">

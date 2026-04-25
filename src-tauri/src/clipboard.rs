@@ -588,6 +588,32 @@ fn should_send_auto_submit(auto_submit: bool, paste_method: PasteMethod) -> bool
     auto_submit && paste_method != PasteMethod::None
 }
 
+/// Press the configured `auto_submit_key` from outside the regular
+/// paste pipeline. Conversation Mode's Chat Mode countdown calls this
+/// after the auto-paste has already happened, so we don't pile a
+/// second `paste` on top — just the Enter press.
+///
+/// Reuses [`send_return_key`] so the user's chosen key (Enter /
+/// Ctrl+Enter / Cmd+Enter) is honoured regardless of which surface
+/// triggered it.
+pub fn send_chat_mode_enter(app_handle: &tauri::AppHandle) {
+    let settings = get_settings(app_handle);
+    let Some(enigo_state) = app_handle.try_state::<EnigoState>() else {
+        log::error!("send_chat_mode_enter: Enigo not initialized");
+        return;
+    };
+    let mut enigo = match enigo_state.0.lock() {
+        Ok(g) => g,
+        Err(e) => {
+            log::error!("send_chat_mode_enter: lock Enigo: {}", e);
+            return;
+        }
+    };
+    if let Err(e) = send_return_key(&mut enigo, settings.auto_submit_key) {
+        log::error!("send_chat_mode_enter: {}", e);
+    }
+}
+
 pub fn paste(text: String, app_handle: AppHandle) -> Result<(), String> {
     let settings = get_settings(&app_handle);
     let paste_method = settings.paste_method;

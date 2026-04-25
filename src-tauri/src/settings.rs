@@ -529,6 +529,27 @@ pub struct AppSettings {
     /// Used by the UI to nudge first-time enablers.
     #[serde(default)]
     pub knock_calibration_completed: bool,
+    /// Conversation Mode (macOS-only): a hands-free loop that listens
+    /// for the user's speech inside whitelisted chat apps, transcribes
+    /// each utterance on silence, and inserts it into the focused chat
+    /// input. Default OFF.
+    #[serde(default)]
+    pub conversation_mode_enabled: bool,
+    /// Chat Mode: when Conversation Mode is active inside a supported
+    /// chat app, automatically press Enter after a countdown to send
+    /// the message. Distinct from the legacy `auto_submit` toggle so
+    /// users can keep their old shortcut behaviour while opting into
+    /// the new safer auto-send. Default OFF.
+    #[serde(default)]
+    pub chat_mode_enabled: bool,
+    /// Seconds the user has to cancel before Chat Mode auto-sends.
+    /// Allowed: 1, 2, 3 (default), 5.
+    #[serde(default = "default_chat_mode_countdown_secs")]
+    pub chat_mode_countdown_secs: u8,
+    /// Hard cap on a single utterance length. Beyond this, recording
+    /// auto-stops to avoid runaway captures. Default 45 seconds.
+    #[serde(default = "default_conversation_max_utterance_ms")]
+    pub conversation_max_utterance_ms: u32,
 }
 
 /// Mirror of `crate::formatting::FormattingMode` that lives in the settings
@@ -565,9 +586,23 @@ fn default_smart_formatting_enabled() -> bool {
 
 /// Conservative default chosen to favour false negatives over false
 /// positives — a missed knock is fine, a phantom recording is not.
-/// Calibration moves this per-device.
+/// 0.30 reliably rejects trackpad clicks and most chassis ticks
+/// without calibration. Calibration sharpens this per-device.
 pub fn default_knock_threshold() -> f32 {
-    0.18
+    0.30
+}
+
+/// 3 s gives the user real time to hit "Cancel send" before a
+/// transcript flies into a chat thread. Faster (1-2 s) feels snappier
+/// but loses the safety margin Conversation Mode is built around.
+pub fn default_chat_mode_countdown_secs() -> u8 {
+    3
+}
+
+/// 45 s is well past any natural conversational utterance; longer is
+/// almost always a stuck VAD or an open mic the user forgot about.
+pub fn default_conversation_max_utterance_ms() -> u32 {
+    45_000
 }
 
 fn default_smart_formatting_app_aware() -> bool {
@@ -857,8 +892,13 @@ pub const SETTINGS_STORE_PATH: &str = "settings_store.json";
 pub fn get_default_settings() -> AppSettings {
     #[cfg(target_os = "windows")]
     let default_shortcut = "ctrl+space";
+    // macOS: Fn (the Globe key on modern Apple keyboards) is a single
+    // ergonomic press, lives on the bottom-left, and HandyKeys supports
+    // modifier-only bindings. Conflicts only with the system "Press 🌐
+    // to ..." setting (Dictation / Show Emoji) which the user can
+    // disable in System Settings → Keyboard if needed.
     #[cfg(target_os = "macos")]
-    let default_shortcut = "option+space";
+    let default_shortcut = "fn";
     #[cfg(target_os = "linux")]
     let default_shortcut = "ctrl+space";
     #[cfg(not(any(target_os = "windows", target_os = "macos", target_os = "linux")))]
@@ -877,8 +917,10 @@ pub fn get_default_settings() -> AppSettings {
     );
     #[cfg(target_os = "windows")]
     let default_post_process_shortcut = "ctrl+shift+space";
+    // Pair the post-process shortcut with the new Fn-only base — the
+    // user can hold Shift + Fn for the post-processed flavour.
     #[cfg(target_os = "macos")]
-    let default_post_process_shortcut = "option+shift+space";
+    let default_post_process_shortcut = "shift+fn";
     #[cfg(target_os = "linux")]
     let default_post_process_shortcut = "ctrl+shift+space";
     #[cfg(not(any(target_os = "windows", target_os = "macos", target_os = "linux")))]
@@ -971,6 +1013,10 @@ pub fn get_default_settings() -> AppSettings {
         knock_threshold: default_knock_threshold(),
         knock_input_device_id: None,
         knock_calibration_completed: false,
+        conversation_mode_enabled: false,
+        chat_mode_enabled: false,
+        chat_mode_countdown_secs: default_chat_mode_countdown_secs(),
+        conversation_max_utterance_ms: default_conversation_max_utterance_ms(),
     }
 }
 

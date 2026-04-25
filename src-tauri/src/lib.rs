@@ -12,6 +12,7 @@ mod hardware;
 mod helpers;
 mod hinglish;
 mod model_recommend;
+mod conversation;
 mod snippets;
 mod tap_detection;
 mod input;
@@ -171,6 +172,14 @@ fn initialize_core_logic(app_handle: &AppHandle) {
     app_handle.manage(model_manager.clone());
     app_handle.manage(transcription_manager.clone());
     app_handle.manage(history_manager.clone());
+
+    // Conversation Mode driver — owns the state machine, app
+    // detector, and VAD loop. Always-construct so command lookups
+    // succeed on every platform; v1 audio engine is macOS-only.
+    {
+        let driver = conversation::ConversationDriver::new(app_handle.clone());
+        app_handle.manage(driver);
+    }
 
     // Knock Mode (macOS-only audio engine; settings exist on every
     // platform). Always-construct so the Tauri command lookups don't
@@ -469,6 +478,15 @@ pub fn run(cli_args: CliArgs) {
             shortcut::set_knock_mode_enabled,
             shortcut::start_knock_calibration,
             shortcut::cancel_knock_calibration,
+            shortcut::set_conversation_mode_enabled,
+            shortcut::set_chat_mode_enabled,
+            shortcut::set_chat_mode_countdown_secs,
+            shortcut::conversation_pause,
+            shortcut::conversation_resume,
+            shortcut::conversation_force_send,
+            shortcut::conversation_cancel_send,
+            shortcut::conversation_insert_pending,
+            shortcut::conversation_discard_pending,
             shortcut::delete_vocab_candidate,
             shortcut::promote_vocab_candidate,
             shortcut::clear_vocab_candidates,

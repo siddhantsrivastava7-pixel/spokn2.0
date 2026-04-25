@@ -12,6 +12,7 @@ import { Button } from "../../ui/Button";
 import { useSettings } from "../../../hooks/useSettings";
 import { commands, type SmartFormattingMode } from "@/bindings";
 import { KnockMode } from "./KnockMode";
+import { ConversationMode } from "./ConversationMode";
 
 const SF_MODES: { value: SmartFormattingMode; label: string }[] = [
   { value: "smart", label: "Smart" },
@@ -160,6 +161,7 @@ export const GeneralSettings: React.FC = () => {
           />
         )}
         <KnockMode />
+        <ConversationMode />
       </SettingsGroup>
 
       <SettingsGroup title={t("simplified.general.smartTitle")}>

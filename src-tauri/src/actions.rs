@@ -789,16 +789,19 @@ pub const KNOCK_MODE_BINDING_ID: &str = "knock_mode";
 
 /// Triggered by the [`crate::tap_detection::KnockService`] callback.
 /// Mirrors the global-shortcut path: if the recorder is idle, start;
-/// otherwise stop. Reuses [`TranscribeAction`] so audio feedback,
-/// overlay, mute, and the transcription pipeline behave identically
-/// to a hotkey-triggered session.
+/// otherwise stop using whatever binding owns the active recording.
+///
+/// The binding-aware stop is critical — `stop_recording` rejects
+/// mismatched binding ids, so hard-coding `KNOCK_MODE_BINDING_ID`
+/// would silently no-op on a keyboard-started recording and leave
+/// the state machine stuck in "Recording".
 pub fn trigger_knock_mode(app: &AppHandle) {
     let rm = app.state::<Arc<AudioRecordingManager>>();
     let action: Arc<dyn ShortcutAction> =
         Arc::new(TranscribeAction { post_process: false });
-    if rm.is_recording() {
-        debug!("Knock Mode: stop");
-        action.stop(app, KNOCK_MODE_BINDING_ID, "double-tap");
+    if let Some(active) = rm.active_binding_id() {
+        debug!("Knock Mode: stop (active binding: {})", active);
+        action.stop(app, &active, "double-tap");
     } else {
         debug!("Knock Mode: start");
         action.start(app, KNOCK_MODE_BINDING_ID, "double-tap");

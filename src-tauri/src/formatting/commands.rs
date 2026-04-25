@@ -14,15 +14,20 @@ pub fn apply_spoken_punctuation(text: &str) -> String {
     // Order matters: multi-word phrases first so "new paragraph" is not
     // shadowed by "new".
     let replacements: &[(&str, &str)] = &[
-        (r"(?i)\bnew\s+paragraph\b\s*,?", "\n\n"),
-        (r"(?i)\bnew\s+line\b\s*,?", "\n"),
+        // Eat any preceding comma too — Whisper consistently adds a
+        // ", " before the "new line" / "new paragraph" cue. Without
+        // this we leak commas like "Line 1,\nLine 2,\n…".
+        (r"(?i),?\s*\bnew\s+paragraph\b\s*,?", "\n\n"),
+        (r"(?i),?\s*\bnew\s+line\b\s*,?", "\n"),
         (r"(?i)\bfull\s+stop\b\s*,?", "."),
         (r"(?i)\bquestion\s+mark\b\s*,?", "?"),
         (r"(?i)\bexclamation\s+(mark|point)\b\s*,?", "!"),
         (r"(?i)\bopen\s+quote\b\s*,?", "\""),
         (r"(?i)\bclose\s+quote\b\s*,?", "\""),
-        (r"(?i)\bopen\s+paren(thesis)?\b\s*,?", "("),
-        (r"(?i)\bclose\s+paren(thesis)?\b\s*,?", ")"),
+        // "parin" / "paran" are common Whisper mis-transcriptions of
+        // "paren". Cheap accuracy win since neither is an English word.
+        (r"(?i)\bopen\s+par(?:en|in|an)(?:thesis)?\b\s*,?", "("),
+        (r"(?i)\bclose\s+par(?:en|in|an)(?:thesis)?\b\s*,?", ")"),
         // ACCURACY-FIRST POLICY:
         // We deliberately do NOT convert mid-sentence single-word punctuation
         // (period / colon / semicolon / dash) because "the third period of
@@ -64,6 +69,13 @@ pub fn apply_spoken_punctuation(text: &str) -> String {
         (r"(?i)([.!?])\s+comma\s+", "$1, "),
         (r"(?i)([.!?])\s+period\s+", "$1. "),
         (r"(?i)([.!?])\s+colon\s+", "$1: "),
+        // Whisper-mangled pattern ". Comma. Word" — Whisper sometimes
+        // wraps the spoken "comma" cue with periods on both sides when
+        // it sits at a clause boundary. Without this, "tomorrow comma
+        // please confirm" becomes "tomorrow. Please confirm." (period
+        // intact, cue dropped). We rewrite to ", word" — same risk
+        // profile as the standard clause-leading rule above.
+        (r"(?i)([.!?])\s+comma\s*[.!?]\s+([A-Za-z])", ", $2"),
     ];
 
     let mut out = text.to_string();
@@ -286,5 +298,30 @@ mod tests {
         // Don't mangle when "period" is a legitimate noun mid-sentence.
         let out = apply_spoken_punctuation("I had a great period in life");
         assert!(out.contains("period"));
+    }
+
+    #[test]
+    fn new_line_eats_preceding_comma() {
+        // Whisper inserts a comma before "new line"; we want that comma
+        // gone so the result is clean line breaks.
+        let out = apply_spoken_punctuation("line one, new line, line two");
+        assert!(!out.contains(","), "got: {:?}", out);
+        assert!(out.contains('\n'));
+    }
+
+    #[test]
+    fn paren_misspelling_still_matches() {
+        let out = apply_spoken_punctuation("open parin this is a side note close paran");
+        assert!(out.contains('('), "got: {:?}", out);
+        assert!(out.contains(')'), "got: {:?}", out);
+    }
+
+    #[test]
+    fn comma_wrapped_with_periods_becomes_comma() {
+        // Regression for the "tomorrow comma please confirm" →
+        // "tomorrow. Please confirm." case — Whisper wraps the cue
+        // with periods on both sides; our rule should recover it.
+        let out = apply_spoken_punctuation("tomorrow. Comma. please confirm");
+        assert!(out.contains(", "), "got: {:?}", out);
     }
 }

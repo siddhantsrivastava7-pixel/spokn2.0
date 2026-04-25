@@ -1,6 +1,6 @@
 [package]
 name = "spokn"
-version = "0.2.0"
+version = "0.3.0"
 description = "Spokn"
 authors = ["Spokn"]
 edition = "2021"
@@ -102,6 +102,9 @@ winreg = "0.55"
 tauri-nspanel = { git = "https://github.com/ahkohd/tauri-nspanel", branch = "v2.1" }
 transcribe-rs = { version = "0.3.3", features = ["whisper-metal"] }
 core-foundation = "0.10"
+# Conversation Mode app detection — NSWorkspace.frontmostApplication
+objc = "0.2"
+cocoa = "0.26"
 
 [target.'cfg(target_os = "linux")'.dependencies]
 gtk-layer-shell = { version = "0.8", features = ["v0_6"] }

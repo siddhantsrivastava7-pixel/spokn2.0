@@ -1151,6 +1151,142 @@ pub fn set_user_name(
     Ok(())
 }
 
+/* ------------------------------------------------------------------
+ * Conversation Mode commands
+ * ------------------------------------------------------------------ */
+
+/// Toggle Conversation Mode. Drives the [`ConversationDriver`] state
+/// machine via `Enable` / `Disable` events.
+#[tauri::command]
+#[specta::specta]
+pub fn set_conversation_mode_enabled(
+    app: AppHandle,
+    enabled: bool,
+) -> Result<String, String> {
+    let mut s = settings::get_settings(&app);
+    s.conversation_mode_enabled = enabled;
+    settings::write_settings(&app, s);
+    let driver = app
+        .state::<std::sync::Arc<crate::conversation::ConversationDriver>>()
+        .inner()
+        .clone();
+    let ev = if enabled {
+        crate::conversation::controller::Event::Enable
+    } else {
+        crate::conversation::controller::Event::Disable
+    };
+    let new_state = driver.dispatch(ev);
+    Ok(new_state.label().to_string())
+}
+
+/// Toggle Chat Mode (auto-send-after-countdown inside Conversation
+/// Mode). Updates the controller's policy live without restarting.
+#[tauri::command]
+#[specta::specta]
+pub fn set_chat_mode_enabled(app: AppHandle, enabled: bool) -> Result<(), String> {
+    let mut s = settings::get_settings(&app);
+    s.chat_mode_enabled = enabled;
+    settings::write_settings(&app, s);
+    // For v1: chat mode policy is read at driver construction; if the
+    // user toggles it mid-session it'll apply on next Conversation
+    // Mode enable. Acceptable v1 ergonomics — surface in UI.
+    Ok(())
+}
+
+#[tauri::command]
+#[specta::specta]
+pub fn set_chat_mode_countdown_secs(
+    app: AppHandle,
+    secs: u8,
+) -> Result<(), String> {
+    let clamped = match secs {
+        1 | 2 | 3 | 5 => secs,
+        _ => return Err(format!("countdown must be 1, 2, 3, or 5; got {secs}")),
+    };
+    let mut s = settings::get_settings(&app);
+    s.chat_mode_countdown_secs = clamped;
+    settings::write_settings(&app, s);
+    Ok(())
+}
+
+#[tauri::command]
+#[specta::specta]
+pub fn conversation_pause(app: AppHandle) -> Result<String, String> {
+    let driver = app
+        .state::<std::sync::Arc<crate::conversation::ConversationDriver>>()
+        .inner()
+        .clone();
+    Ok(driver
+        .dispatch(crate::conversation::controller::Event::PauseRequested)
+        .label()
+        .to_string())
+}
+
+#[tauri::command]
+#[specta::specta]
+pub fn conversation_resume(app: AppHandle) -> Result<String, String> {
+    let driver = app
+        .state::<std::sync::Arc<crate::conversation::ConversationDriver>>()
+        .inner()
+        .clone();
+    Ok(driver
+        .dispatch(crate::conversation::controller::Event::ResumeRequested)
+        .label()
+        .to_string())
+}
+
+#[tauri::command]
+#[specta::specta]
+pub fn conversation_force_send(app: AppHandle) -> Result<String, String> {
+    let driver = app
+        .state::<std::sync::Arc<crate::conversation::ConversationDriver>>()
+        .inner()
+        .clone();
+    Ok(driver
+        .dispatch(crate::conversation::controller::Event::ForceSend)
+        .label()
+        .to_string())
+}
+
+#[tauri::command]
+#[specta::specta]
+pub fn conversation_cancel_send(app: AppHandle) -> Result<String, String> {
+    let driver = app
+        .state::<std::sync::Arc<crate::conversation::ConversationDriver>>()
+        .inner()
+        .clone();
+    Ok(driver
+        .dispatch(crate::conversation::controller::Event::CancelSend)
+        .label()
+        .to_string())
+}
+
+#[tauri::command]
+#[specta::specta]
+pub fn conversation_insert_pending(app: AppHandle) -> Result<String, String> {
+    let driver = app
+        .state::<std::sync::Arc<crate::conversation::ConversationDriver>>()
+        .inner()
+        .clone();
+    Ok(driver
+        .dispatch(crate::conversation::controller::Event::InsertPending)
+        .label()
+        .to_string())
+}
+
+#[tauri::command]
+#[specta::specta]
+pub fn conversation_discard_pending(app: AppHandle) -> Result<String, String> {
+    let driver = app
+        .state::<std::sync::Arc<crate::conversation::ConversationDriver>>()
+        .inner()
+        .clone();
+    Ok(driver
+        .dispatch(crate::conversation::controller::Event::DiscardPending)
+        .label()
+        .to_string())
+}
+
 /// Toggle Knock Mode on/off. Persists the setting and (re)starts or
 /// stops the listener service to match. macOS-only — on other
 /// platforms the service start returns an error which we surface.

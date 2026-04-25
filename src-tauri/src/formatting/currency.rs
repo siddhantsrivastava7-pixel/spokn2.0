@@ -11,10 +11,21 @@ use super::numbers::format_indian;
 /// Convert "<number> rupees" / "rs <number>" variants into "₹<number>" using
 /// Indian digit grouping.
 pub fn format_rupees(text: &str) -> String {
-    static RE_TRAILING: Lazy<Regex> =
-        Lazy::new(|| Regex::new(r"(?i)(\d[\d,]*)\s*(?:rupees|rupee|rs\.?|inr)\b").unwrap());
-    static RE_LEADING: Lazy<Regex> =
-        Lazy::new(|| Regex::new(r"(?i)\b(?:rupees|rs\.?|inr)\s+(\d[\d,]*)").unwrap());
+    // Aliases include common Hinglish/Whisper variants ("rupaya",
+    // "rupiya", "rupaye", "rupye"). None of these are English words so
+    // the false-positive risk on non-currency text is essentially nil.
+    static RE_TRAILING: Lazy<Regex> = Lazy::new(|| {
+        Regex::new(
+            r"(?i)(\d[\d,]*)\s*(?:rupees|rupee|rupaya|rupiya|rupaye|rupye|rs\.?|inr)\b",
+        )
+        .unwrap()
+    });
+    static RE_LEADING: Lazy<Regex> = Lazy::new(|| {
+        Regex::new(
+            r"(?i)\b(?:rupees|rupaya|rupiya|rupaye|rupye|rs\.?|inr)\s+(\d[\d,]*)",
+        )
+        .unwrap()
+    });
 
     let replace = |caps: &regex::Captures| {
         let raw = caps[1].replace(',', "");
@@ -166,5 +177,14 @@ mod tests {
     #[test]
     fn preserves_unrelated_text() {
         assert_eq!(format_rupees("hello world"), "hello world");
+    }
+
+    #[test]
+    fn rupaya_alias_works() {
+        // Hinglish/Whisper variant — the actual word an Indian speaker
+        // uses or that Whisper transcribes ("rupees" → "rupaya").
+        assert_eq!(format_rupees("5000 rupaya"), "₹5,000");
+        assert_eq!(format_rupees("500 rupiya"), "₹500");
+        assert_eq!(format_rupees("250 rupaye"), "₹250");
     }
 }

@@ -477,6 +477,18 @@ impl AudioRecordingManager {
             _ => None,
         }
     }
+    /// Returns the binding_id that started the active recording, or
+    /// `None` if idle. Used by callers (e.g. Knock Mode) that need to
+    /// stop an in-progress recording without knowing which trigger
+    /// fired it — `stop_recording` enforces a binding match, so the
+    /// caller has to pass back the original id.
+    pub fn active_binding_id(&self) -> Option<String> {
+        match &*self.state.lock().unwrap() {
+            RecordingState::Recording { binding_id } => Some(binding_id.clone()),
+            _ => None,
+        }
+    }
+
     pub fn is_recording(&self) -> bool {
         matches!(
             *self.state.lock().unwrap(),

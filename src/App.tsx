@@ -15,6 +15,7 @@ import Onboarding, { AccessibilityOnboarding } from "./components/onboarding";
 import LanguageOnboarding from "./components/onboarding/LanguageOnboarding";
 import ModelDownloading from "./components/onboarding/ModelDownloading";
 import UserInfoOnboarding from "./components/onboarding/UserInfoOnboarding";
+import ConversationStatus from "./components/conversation/ConversationStatus";
 import { Sidebar, SidebarSection, SECTIONS_CONFIG } from "./components/Sidebar";
 import { RESET_ONBOARDING_EVENT } from "./components/settings/ResetOnboardingButton";
 import QuickSettings from "./components/QuickSettings";
@@ -363,6 +364,16 @@ function App() {
       dir={direction}
       className="h-screen flex flex-col select-none cursor-default bg-spokn-bg text-spokn-text"
     >
+      <div
+        style={{
+          position: "fixed",
+          top: 12,
+          right: 12,
+          zIndex: 50,
+        }}
+      >
+        <ConversationStatus />
+      </div>
       <Toaster
         theme="dark"
         toastOptions={{

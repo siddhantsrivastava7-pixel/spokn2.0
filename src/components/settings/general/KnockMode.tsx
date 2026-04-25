@@ -121,6 +121,23 @@ export const KnockMode: React.FC = () => {
         descriptionMode="inline"
         grouped={true}
       />
+      {enabled && !calibrationCompleted && !calibrating && (
+        // eslint-disable-next-line i18next/no-literal-string
+        <div
+          className="px-3 py-2 mx-1 my-1 rounded-md border text-[12px] flex items-start gap-2"
+          style={{
+            background: "rgba(245, 158, 11, 0.08)",
+            borderColor: "rgba(245, 158, 11, 0.35)",
+            color: "#f59e0b",
+          }}
+        >
+          <span aria-hidden>⚠</span>
+          <span>
+            Calibrate before using Knock Mode — without it, regular
+            trackpad clicks and typing can trigger phantom recordings.
+          </span>
+        </div>
+      )}
       {enabled && (
         <SettingContainer
           title={

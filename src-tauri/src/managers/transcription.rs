@@ -611,7 +611,10 @@ impl TranscriptionManager {
                             // user's custom_words. Whisper-only — Parakeet
                             // ignores `initial_prompt`.
                             let mut prompt_parts: Vec<String> = Vec::new();
-                            if crate::hinglish::user_speaks_hindi(
+                            // Hinglish biasing only when BOTH "en" and
+                            // "hi" are selected — otherwise we leak Hindi
+                            // tokens into pure-English transcriptions.
+                            if crate::hinglish::user_speaks_hinglish(
                                 &settings.transcription_languages,
                             ) {
                                 prompt_parts.push(

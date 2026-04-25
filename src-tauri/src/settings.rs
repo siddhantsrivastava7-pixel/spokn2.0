@@ -1176,12 +1176,12 @@ fn migrate_vocab_v2(settings: &mut AppSettings) -> bool {
     }
 
     settings.custom_words = keep;
-    settings.hinglish_seed = if crate::hinglish::user_speaks_hindi(
+    settings.hinglish_seed = if crate::hinglish::user_speaks_hinglish(
         &settings.transcription_languages,
     ) {
-        // Only carry the Hinglish seed forward if Hindi is still in
-        // the user's languages — otherwise pure-English-only users
-        // get a clean slate.
+        // Only carry the Hinglish seed forward if the user actually
+        // dictates Hinglish (BOTH en + hi selected). Otherwise an
+        // English-only user (or Hindi-only user) gets a clean slate.
         hinglish_kept
     } else {
         Vec::new()

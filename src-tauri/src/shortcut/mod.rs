@@ -1098,13 +1098,14 @@ pub fn change_transcription_languages_setting(
 ) -> Result<(), String> {
     let mut settings = settings::get_settings(&app);
     settings.transcription_languages = languages;
-    let speaks_hindi =
-        crate::hinglish::user_speaks_hindi(&settings.transcription_languages);
+    let speaks_hinglish =
+        crate::hinglish::user_speaks_hinglish(&settings.transcription_languages);
 
-    if speaks_hindi {
-        // Hindi selected — populate `hinglish_seed` (NOT `custom_words`)
-        // so the Whisper prompt biases without affecting English-only
-        // models (Parakeet) via the fuzzy-match post-processor.
+    if speaks_hinglish {
+        // BOTH English AND Hindi selected → user dictates Hinglish.
+        // Populate `hinglish_seed` (NOT `custom_words`) so the
+        // Whisper prompt biases without affecting English-only models
+        // (Parakeet) via the fuzzy-match post-processor.
         // Idempotent: only seeds once per install.
         if !settings.hinglish_starter_seeded {
             settings.hinglish_seed =
@@ -1115,7 +1116,7 @@ pub fn change_transcription_languages_setting(
             settings.hinglish_starter_seeded = true;
         } else if settings.hinglish_seed.is_empty() {
             // Already seeded historically but the new seed field is
-            // empty (e.g. fresh user removing & re-adding Hindi).
+            // empty (e.g. user removed & re-added one of en/hi).
             // Re-populate so prompt biasing comes back.
             settings.hinglish_seed =
                 crate::hinglish::HINGLISH_STARTER_WORDS
@@ -1124,8 +1125,9 @@ pub fn change_transcription_languages_setting(
                     .collect();
         }
     } else {
-        // Hindi removed → drop the Hinglish seed so no Hinglish bias
-        // contaminates future English transcriptions.
+        // Either English or Hindi was removed → no longer dictating
+        // Hinglish. Drop the seed so no Hinglish bias contaminates
+        // future transcriptions in whichever language remains.
         if !settings.hinglish_seed.is_empty() {
             settings.hinglish_seed.clear();
         }

@@ -66,11 +66,29 @@ pub const HINGLISH_SEED_PROMPT: &str =
     "Haan bhai, kal subah office chalo phir lunch karenge. Theek hai, matlab agar koi problem nahi to chalo. Yaar yeh kaam jaldi karna hai.";
 
 /// True if the user's transcription_languages list includes Hindi (case
-/// insensitive, ISO-639-1 code "hi").
+/// insensitive, ISO-639-1 code "hi"). Internal helper — call sites
+/// should usually use [`user_speaks_hinglish`] which is the actual
+/// gate for Hinglish biasing.
 pub fn user_speaks_hindi(transcription_languages: &[String]) -> bool {
+    has_lang(transcription_languages, "hi")
+}
+
+/// True if the user has BOTH English AND Hindi selected — the
+/// definition of Hinglish (code-mixed Indian English with Hindi
+/// vocabulary). Hinglish biasing should ONLY run in this case:
+///   - Pure English-only users get clean English transcription
+///     without Hindi tokens leaking in.
+///   - Pure Hindi (Devanagari) users don't need Roman-Hindi biasing.
+///   - Only the explicit en + hi combo wants Romanised-Hindi help.
+pub fn user_speaks_hinglish(transcription_languages: &[String]) -> bool {
+    has_lang(transcription_languages, "en") && has_lang(transcription_languages, "hi")
+}
+
+fn has_lang(transcription_languages: &[String], code: &str) -> bool {
+    let want = code.to_lowercase();
     transcription_languages.iter().any(|l| {
         let normalized = l.split('-').next().unwrap_or(l).to_lowercase();
-        normalized == "hi"
+        normalized == want
     })
 }
 
@@ -165,6 +183,46 @@ mod tests {
     #[test]
     fn empty_list_is_not_hindi() {
         assert!(!user_speaks_hindi(&[]));
+    }
+
+    // ---- Hinglish gate (en + hi) ----
+
+    #[test]
+    fn hinglish_requires_both_en_and_hi() {
+        assert!(user_speaks_hinglish(&[
+            "en".to_string(),
+            "hi".to_string()
+        ]));
+        assert!(user_speaks_hinglish(&[
+            "hi-IN".to_string(),
+            "en-US".to_string()
+        ]));
+    }
+
+    #[test]
+    fn hinglish_off_when_only_english() {
+        // The exact case the user reported: "if user only has eng
+        // selected then dont run hinglish filter".
+        assert!(!user_speaks_hinglish(&["en".to_string()]));
+        assert!(!user_speaks_hinglish(&[
+            "en".to_string(),
+            "fr".to_string()
+        ]));
+    }
+
+    #[test]
+    fn hinglish_off_when_only_hindi() {
+        // Pure-Devanagari users don't want Roman-Hindi prompt biasing.
+        assert!(!user_speaks_hinglish(&["hi".to_string()]));
+        assert!(!user_speaks_hinglish(&[
+            "hi".to_string(),
+            "ta".to_string()
+        ]));
+    }
+
+    #[test]
+    fn hinglish_off_when_empty() {
+        assert!(!user_speaks_hinglish(&[]));
     }
 
     // ---- Hinglish detector ----

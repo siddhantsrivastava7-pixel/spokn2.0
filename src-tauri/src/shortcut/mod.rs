@@ -1098,23 +1098,37 @@ pub fn change_transcription_languages_setting(
 ) -> Result<(), String> {
     let mut settings = settings::get_settings(&app);
     settings.transcription_languages = languages;
-    // First-time Hindi selection → seed the Hinglish starter vocabulary
-    // into custom_words. Idempotent via the persisted seeded flag — if a
-    // user later deletes a starter word, we won't re-add it.
-    if !settings.hinglish_starter_seeded
-        && crate::hinglish::user_speaks_hindi(&settings.transcription_languages)
-    {
-        let existing: std::collections::HashSet<String> = settings
-            .custom_words
-            .iter()
-            .map(|w| w.to_lowercase())
-            .collect();
-        for word in crate::hinglish::HINGLISH_STARTER_WORDS {
-            if !existing.contains(&word.to_lowercase()) {
-                settings.custom_words.push((*word).to_string());
-            }
+    let speaks_hindi =
+        crate::hinglish::user_speaks_hindi(&settings.transcription_languages);
+
+    if speaks_hindi {
+        // Hindi selected — populate `hinglish_seed` (NOT `custom_words`)
+        // so the Whisper prompt biases without affecting English-only
+        // models (Parakeet) via the fuzzy-match post-processor.
+        // Idempotent: only seeds once per install.
+        if !settings.hinglish_starter_seeded {
+            settings.hinglish_seed =
+                crate::hinglish::HINGLISH_STARTER_WORDS
+                    .iter()
+                    .map(|s| (*s).to_string())
+                    .collect();
+            settings.hinglish_starter_seeded = true;
+        } else if settings.hinglish_seed.is_empty() {
+            // Already seeded historically but the new seed field is
+            // empty (e.g. fresh user removing & re-adding Hindi).
+            // Re-populate so prompt biasing comes back.
+            settings.hinglish_seed =
+                crate::hinglish::HINGLISH_STARTER_WORDS
+                    .iter()
+                    .map(|s| (*s).to_string())
+                    .collect();
         }
-        settings.hinglish_starter_seeded = true;
+    } else {
+        // Hindi removed → drop the Hinglish seed so no Hinglish bias
+        // contaminates future English transcriptions.
+        if !settings.hinglish_seed.is_empty() {
+            settings.hinglish_seed.clear();
+        }
     }
     settings::write_settings(&app, settings);
     Ok(())
@@ -1410,6 +1424,33 @@ pub fn cancel_knock_calibration(
 ) -> Result<(), String> {
     let svc = app.state::<std::sync::Arc<crate::tap_detection::KnockService>>();
     svc.cancel_calibration();
+    Ok(())
+}
+
+/// Wipe ALL auto-learned vocabulary in one shot. Use case: the v0.3.2
+/// migration ran but the user has accumulated more poisoned data
+/// since, OR the user wants to start fresh after toggling Hindi off
+/// and on. Re-seeds the user's intentional name + known names so
+/// those don't get lost.
+#[tauri::command]
+#[specta::specta]
+pub fn reset_learned_vocabulary(app: AppHandle) -> Result<(), String> {
+    let mut s = settings::get_settings(&app);
+    let mut keep: Vec<String> = Vec::new();
+    if !s.user_first_name.is_empty() {
+        keep.push(s.user_first_name.clone());
+    }
+    if !s.user_last_name.is_empty() {
+        keep.push(s.user_last_name.clone());
+    }
+    for name in &s.known_names {
+        for token in name.split_whitespace() {
+            keep.push(token.to_string());
+        }
+    }
+    s.custom_words = keep;
+    s.vocab_candidates.clear();
+    settings::write_settings(&app, s);
     Ok(())
 }
 

@@ -218,6 +218,16 @@ pub fn merge_into_candidates(
 ///
 /// No-op on non-macOS platforms in this pass.
 pub fn start_capture_session(app: tauri::AppHandle, pasted: String) {
+    // v0.3.2: gate behind a settings toggle (default OFF). The previous
+    // algorithm was over-promoting non-correction tokens (mangled
+    // punctuation, URLs, every transcribed word) which poisoned
+    // `custom_words`. The redesigned confidence-based learner ships
+    // in v0.3.3; until then this path is a no-op unless the user
+    // explicitly opts in via Advanced settings.
+    let settings = crate::settings::get_settings(&app);
+    if !settings.auto_vocab_learning_enabled {
+        return;
+    }
     #[cfg(target_os = "macos")]
     {
         macos::spawn_session(app, pasted);

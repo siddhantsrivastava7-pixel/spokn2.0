@@ -550,6 +550,25 @@ pub struct AppSettings {
     /// auto-stops to avoid runaway captures. Default 45 seconds.
     #[serde(default = "default_conversation_max_utterance_ms")]
     pub conversation_max_utterance_ms: u32,
+    /// Hinglish vocabulary seed. Populated when the user adds Hindi
+    /// to `transcription_languages`; passed to Whisper's
+    /// `initial_prompt` only (NOT injected into `custom_words`, which
+    /// would corrupt English-only models like Parakeet via the
+    /// fuzzy-match post-processor).
+    #[serde(default)]
+    pub hinglish_seed: Vec<String>,
+    /// One-time migration flag for the vocab v2 redesign. When false
+    /// at startup, we reset the poisoned auto-learned data
+    /// (`custom_words` + `vocab_candidates`), turn off the fuzzy
+    /// match by default, and re-seed the user's name + known names.
+    #[serde(default)]
+    pub vocab_v2_migrated: bool,
+    /// Auto-vocabulary learning master switch. Default OFF in
+    /// v0.3.2 — the previous algorithm was over-promoting tokens
+    /// that weren't real corrections. Will be re-enabled in v0.3.3
+    /// when the confidence-based redesign ships.
+    #[serde(default)]
+    pub auto_vocab_learning_enabled: bool,
 }
 
 /// Mirror of `crate::formatting::FormattingMode` that lives in the settings
@@ -653,7 +672,12 @@ fn default_log_level() -> LogLevel {
 }
 
 fn default_word_correction_threshold() -> f64 {
-    0.18
+    // 0 = OFF. The fuzzy-match post-processor was rewriting Whisper /
+    // Parakeet output against `custom_words`, which (combined with
+    // Hinglish seed words leaking into `custom_words`) was turning
+    // English transcriptions into Hindi. v0.3.2 disables it by
+    // default. Users can opt back in via Advanced settings.
+    0.0
 }
 
 fn default_paste_delay_ms() -> u64 {
@@ -1017,6 +1041,9 @@ pub fn get_default_settings() -> AppSettings {
         chat_mode_enabled: false,
         chat_mode_countdown_secs: default_chat_mode_countdown_secs(),
         conversation_max_utterance_ms: default_conversation_max_utterance_ms(),
+        hinglish_seed: Vec::new(),
+        vocab_v2_migrated: false,
+        auto_vocab_learning_enabled: false,
     }
 }
 
@@ -1091,7 +1118,77 @@ pub fn load_or_create_app_settings(app: &AppHandle) -> AppSettings {
         store.set("settings", serde_json::to_value(&settings).unwrap());
     }
 
+    if migrate_vocab_v2(&mut settings) {
+        debug!("Applied vocab v2 migration");
+        store.set("settings", serde_json::to_value(&settings).unwrap());
+    }
+
     settings
+}
+
+/// One-time clean-up for the v0.3.2 vocab redesign:
+///   * Resets `word_correction_threshold` to 0 (the leak that was
+///     rewriting English transcripts as Hinglish via fuzzy match
+///     against `custom_words`).
+///   * Clears `custom_words` and `vocab_candidates` (poisoned by the
+///     over-eager auto-learner). Re-seeds the user's name + known
+///     names since those are intentional, not auto-learned.
+///   * Migrates any Hinglish starter words out of `custom_words`
+///     and into the new `hinglish_seed` field (Whisper-prompt only).
+///   * Sets `vocab_v2_migrated = true` so it never runs again.
+fn migrate_vocab_v2(settings: &mut AppSettings) -> bool {
+    if settings.vocab_v2_migrated {
+        return false;
+    }
+
+    settings.word_correction_threshold = 0.0;
+
+    // Re-seed user's intentional vocabulary BEFORE wiping custom_words
+    // so we don't lose what they explicitly added.
+    let mut keep: Vec<String> = Vec::new();
+    if !settings.user_first_name.is_empty() {
+        keep.push(settings.user_first_name.clone());
+    }
+    if !settings.user_last_name.is_empty() {
+        keep.push(settings.user_last_name.clone());
+    }
+    for name in &settings.known_names {
+        for token in name.split_whitespace() {
+            keep.push(token.to_string());
+        }
+    }
+
+    // Hinglish starter words → move to dedicated seed field. We can
+    // recognise them because they're the exact list shipped in
+    // `crate::hinglish::HINGLISH_STARTER_WORDS`. Anything else gets
+    // dropped (it was auto-learned garbage).
+    let hinglish_set: std::collections::HashSet<String> =
+        crate::hinglish::HINGLISH_STARTER_WORDS
+            .iter()
+            .map(|w| w.to_lowercase())
+            .collect();
+
+    let mut hinglish_kept: Vec<String> = Vec::new();
+    for w in &settings.custom_words {
+        if hinglish_set.contains(&w.to_lowercase()) {
+            hinglish_kept.push(w.clone());
+        }
+    }
+
+    settings.custom_words = keep;
+    settings.hinglish_seed = if crate::hinglish::user_speaks_hindi(
+        &settings.transcription_languages,
+    ) {
+        // Only carry the Hinglish seed forward if Hindi is still in
+        // the user's languages — otherwise pure-English-only users
+        // get a clean slate.
+        hinglish_kept
+    } else {
+        Vec::new()
+    };
+    settings.vocab_candidates.clear();
+    settings.vocab_v2_migrated = true;
+    true
 }
 
 pub fn get_settings(app: &AppHandle) -> AppSettings {

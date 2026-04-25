@@ -32,8 +32,10 @@ const SAMPLE_RATE: u32 = 16_000;
 const FRAME_SAMPLES: usize = 480;
 
 /// Speech must persist this long before we consider the utterance
-/// "started" — guards against single-frame false positives.
-const SPEECH_ONSET_MS: u64 = 200;
+/// "started" — guards against single-frame false positives. v0.3.2:
+/// dropped from 200ms → 80ms so we lose fewer leading words. Real
+/// fix (a pre-roll buffer / AlwaysOn mic) is v0.3.3.
+const SPEECH_ONSET_MS: u64 = 80;
 
 /// Silence must persist this long before we consider the utterance
 /// "ended". 1100 ms sits in the middle of the 900–1400 spec window.

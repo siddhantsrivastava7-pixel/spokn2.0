@@ -105,6 +105,29 @@ export const VocabularySettings: React.FC = () => {
     }
   };
 
+  // v0.3.2: nuke EVERYTHING auto-learned (custom_words + candidates)
+  // and re-seed only the user's intentional name + known names. The
+  // rebuild-from-scratch escape hatch when transcription quality has
+  // degraded over time.
+  const resetEverything = async () => {
+    if (
+      !confirm(
+        "Reset ALL learned vocabulary?\n\nThis clears every auto-learned word and starts fresh. Your name and Names list are preserved.",
+      )
+    )
+      return;
+    setBusy(true);
+    try {
+      const r = await commands.resetLearnedVocabulary();
+      if ((r as any).status === "error") toast.error((r as any).error);
+      // eslint-disable-next-line i18next/no-literal-string
+      else toast.success("Vocabulary reset");
+      await refreshSettings();
+    } finally {
+      setBusy(false);
+    }
+  };
+
   return (
     <div className="w-full space-y-6">
       <div className="flex items-start justify-between gap-4">
@@ -120,7 +143,19 @@ export const VocabularySettings: React.FC = () => {
             before they start biasing transcription — guards against typos.
           </p>
         </div>
-        {candidates.length > 0 && (
+        <div className="flex items-center gap-2 shrink-0">
+          {/* eslint-disable-next-line i18next/no-literal-string */}
+          <Button
+            variant="danger-ghost"
+            size="md"
+            onClick={resetEverything}
+            disabled={busy}
+            title="Wipe all auto-learned words and start over (keeps your name and Names list)"
+          >
+            Reset all
+          </Button>
+        </div>
+        {false && candidates.length > 0 && (
           <Button
             variant="danger-ghost"
             size="md"

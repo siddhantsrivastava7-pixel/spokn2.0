@@ -475,6 +475,7 @@ pub fn run(cli_args: CliArgs) {
             shortcut::change_transcription_languages_setting,
             shortcut::set_user_name,
             shortcut::set_known_names,
+            shortcut::reset_learned_vocabulary,
             shortcut::set_knock_mode_enabled,
             shortcut::start_knock_calibration,
             shortcut::cancel_knock_calibration,

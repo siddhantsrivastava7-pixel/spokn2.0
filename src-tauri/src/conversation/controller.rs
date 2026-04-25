@@ -167,6 +167,21 @@ impl ControllerCore {
         !matches!(self.state, ConversationState::Off)
     }
 
+    /// Live-update Chat Mode policy. The driver calls this when the
+    /// user toggles Chat Mode from settings so the change takes
+    /// effect on the *next* utterance instead of waiting for the
+    /// next Conversation Mode enable cycle.
+    pub fn set_chat_mode_enabled(&mut self, enabled: bool) {
+        self.chat_mode_enabled = enabled;
+    }
+
+    /// Live-update countdown duration. Same rationale as
+    /// `set_chat_mode_enabled`. Clamps to the supported window so a
+    /// stale settings value can't break the timer.
+    pub fn set_countdown_secs(&mut self, secs: u8) {
+        self.countdown_secs = secs.clamp(1, 5);
+    }
+
     pub fn handle(&mut self, ev: Event) -> Vec<Action> {
         let mut actions = Vec::new();
         let prev = self.state.clone();

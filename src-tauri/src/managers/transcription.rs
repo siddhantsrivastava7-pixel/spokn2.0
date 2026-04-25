@@ -422,7 +422,69 @@ impl TranscriptionManager {
         *is_loading = true;
         let self_clone = self.clone();
         thread::spawn(move || {
-            let settings = get_settings(&self_clone.app_handle);
+            let mut settings = get_settings(&self_clone.app_handle);
+
+            // Stale-id fallback: if `selected_model` is empty, missing
+            // from the registry, or no longer marked as downloaded,
+            // pick the first installed model instead. This is the
+            // root cause of the "after every update transcription
+            // fails silently" bug — older settings can carry a model
+            // id (e.g. "large") that newer registries no longer know
+            // about, so load_model errors out and the user sees
+            // nothing.
+            let needs_fallback = settings.selected_model.is_empty()
+                || self_clone
+                    .model_manager
+                    .get_model_info(&settings.selected_model)
+                    .map(|m| !m.is_downloaded)
+                    .unwrap_or(true);
+
+            if needs_fallback {
+                let fallback = self_clone
+                    .model_manager
+                    .get_available_models()
+                    .into_iter()
+                    .find(|m| m.is_downloaded)
+                    .map(|m| m.id);
+
+                if let Some(new_id) = fallback {
+                    let stale = settings.selected_model.clone();
+                    log::warn!(
+                        "Selected model '{}' not available; falling back to '{}'",
+                        stale,
+                        new_id
+                    );
+                    settings.selected_model = new_id.clone();
+                    crate::settings::write_settings(
+                        &self_clone.app_handle,
+                        settings.clone(),
+                    );
+                    let _ = self_clone.app_handle.emit(
+                        "model-fallback",
+                        serde_json::json!({
+                            "stale_id": stale,
+                            "new_id": new_id,
+                        }),
+                    );
+                } else {
+                    log::warn!(
+                        "Selected model '{}' not available and no other downloaded model exists",
+                        settings.selected_model
+                    );
+                    let _ = self_clone.app_handle.emit(
+                        "model-fallback",
+                        serde_json::json!({
+                            "stale_id": settings.selected_model.clone(),
+                            "new_id": null,
+                        }),
+                    );
+                    let mut is_loading = self_clone.is_loading.lock().unwrap();
+                    *is_loading = false;
+                    self_clone.loading_condvar.notify_all();
+                    return;
+                }
+            }
+
             if let Err(e) = self_clone.load_model(&settings.selected_model) {
                 error!("Failed to load model: {}", e);
             }

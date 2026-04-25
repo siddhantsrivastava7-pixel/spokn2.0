@@ -94,6 +94,15 @@ impl ConversationDriver {
         self.inner.core.lock().unwrap().state().clone()
     }
 
+    /// Push the latest Chat Mode policy into the running controller.
+    /// Without this, toggling Chat Mode in settings would silently
+    /// have no effect until Conversation Mode was re-enabled.
+    pub fn update_chat_mode(&self, enabled: bool, countdown_secs: u8) {
+        let mut core = self.inner.core.lock().unwrap();
+        core.set_chat_mode_enabled(enabled);
+        core.set_countdown_secs(countdown_secs);
+    }
+
     /// Push an event in from outside. The driver applies actions and
     /// returns the (now-current) state for inspection / Tauri reply.
     pub fn dispatch(&self, ev: Event) -> ConversationState {
@@ -131,6 +140,31 @@ impl ConversationDriver {
             Action::StopAppDetector => inner.app_detector.stop(),
 
             Action::StartAudioEngine => {
+                // Pre-load the transcription model NOW so the first
+                // utterance doesn't fail with "Model is not loaded".
+                // The hotkey path does this via TranscribeAction; the
+                // VAD-driven path needs to do it explicitly.
+                let tm = inner
+                    .app
+                    .state::<Arc<crate::managers::transcription::TranscriptionManager>>(
+                    )
+                    .inner()
+                    .clone();
+                tm.initiate_model_load();
+                // Also pre-warm the recorder's VAD context so the
+                // first try_start_recording isn't held up opening the
+                // mic stream.
+                let rm = inner
+                    .app
+                    .state::<Arc<AudioRecordingManager>>()
+                    .inner()
+                    .clone();
+                std::thread::spawn(move || {
+                    if let Err(e) = rm.preload_vad() {
+                        log::debug!("Conversation Mode: preload_vad: {e}");
+                    }
+                });
+
                 // Resolve the VAD model path the same way the existing
                 // recorder does so we don't ship a second copy.
                 let vad_path = match inner.app.path().resolve(

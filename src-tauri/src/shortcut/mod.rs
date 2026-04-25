@@ -1180,16 +1180,21 @@ pub fn set_conversation_mode_enabled(
 }
 
 /// Toggle Chat Mode (auto-send-after-countdown inside Conversation
-/// Mode). Updates the controller's policy live without restarting.
+/// Mode). Live-updates the running controller — the change takes
+/// effect on the next utterance, no need to restart Conversation
+/// Mode.
 #[tauri::command]
 #[specta::specta]
 pub fn set_chat_mode_enabled(app: AppHandle, enabled: bool) -> Result<(), String> {
     let mut s = settings::get_settings(&app);
     s.chat_mode_enabled = enabled;
+    let countdown = s.chat_mode_countdown_secs;
     settings::write_settings(&app, s);
-    // For v1: chat mode policy is read at driver construction; if the
-    // user toggles it mid-session it'll apply on next Conversation
-    // Mode enable. Acceptable v1 ergonomics — surface in UI.
+    let driver = app
+        .state::<std::sync::Arc<crate::conversation::ConversationDriver>>()
+        .inner()
+        .clone();
+    driver.update_chat_mode(enabled, countdown);
     Ok(())
 }
 
@@ -1205,7 +1210,13 @@ pub fn set_chat_mode_countdown_secs(
     };
     let mut s = settings::get_settings(&app);
     s.chat_mode_countdown_secs = clamped;
+    let chat = s.chat_mode_enabled;
     settings::write_settings(&app, s);
+    let driver = app
+        .state::<std::sync::Arc<crate::conversation::ConversationDriver>>()
+        .inner()
+        .clone();
+    driver.update_chat_mode(chat, clamped);
     Ok(())
 }
 
@@ -1329,6 +1340,7 @@ pub fn start_knock_calibration(app: AppHandle) -> Result<(), String> {
     }
 
     let app_for_cb = app.clone();
+    let svc_for_cb = svc.clone();
     let cb: crate::tap_detection::service::CalibrationCallback = std::sync::Arc::new(
         move |progress: CalibrationProgress, outcome: Option<CalibrationOutcome>| {
             #[derive(serde::Serialize, Clone)]
@@ -1348,6 +1360,7 @@ pub fn start_knock_calibration(app: AppHandle) -> Result<(), String> {
                 let mut s = settings::get_settings(&app_for_cb);
                 s.knock_threshold = out.threshold;
                 s.knock_calibration_completed = true;
+                let mode_enabled = s.knock_mode_enabled;
                 settings::write_settings(&app_for_cb, s);
 
                 #[derive(serde::Serialize, Clone)]
@@ -1364,6 +1377,24 @@ pub fn start_knock_calibration(app: AppHandle) -> Result<(), String> {
                         avg_tap_peak: out.avg_tap_peak,
                     },
                 );
+
+                // Calibration leak fix: start_knock_calibration auto-
+                // starts the service so a user can calibrate before
+                // enabling the toggle. Without this, the service would
+                // keep listening forever after calibration even if the
+                // toggle is OFF — exactly the "Knock keeps firing
+                // after I turned it off" bug. Spawned because
+                // svc.stop() drops the cpal stream, and we're called
+                // from inside the audio callback.
+                if !mode_enabled {
+                    let svc_clone = svc_for_cb.clone();
+                    std::thread::spawn(move || {
+                        log::info!(
+                            "Knock Mode: stopping service post-calibration (mode is OFF)"
+                        );
+                        svc_clone.stop();
+                    });
+                }
             }
         },
     );

@@ -221,6 +221,39 @@ function App() {
     };
   }, [t]);
 
+  // Listen for the stale-selected_model fallback. Emitted when the
+  // saved model id is no longer in the registry (renames between
+  // versions) or no longer marked as downloaded — the backend
+  // auto-switches to the first installed model and tells the user.
+  useEffect(() => {
+    const unlisten = listen<{
+      stale_id: string;
+      new_id: string | null;
+    }>("model-fallback", (event) => {
+      const { stale_id, new_id } = event.payload;
+      if (new_id) {
+        // eslint-disable-next-line i18next/no-literal-string
+        toast.info(`Switched model: '${stale_id || "(none)"}' → '${new_id}'`, {
+          // eslint-disable-next-line i18next/no-literal-string
+          description:
+            "Your saved model wasn't available; using a downloaded one instead. Pick a different model in Settings → Models if you'd prefer.",
+          duration: 8000,
+        });
+      } else {
+        // eslint-disable-next-line i18next/no-literal-string
+        toast.error("No transcription model installed", {
+          // eslint-disable-next-line i18next/no-literal-string
+          description:
+            "Open Settings → Models and download one to start transcribing.",
+          duration: 12000,
+        });
+      }
+    });
+    return () => {
+      unlisten.then((fn) => fn());
+    };
+  }, []);
+
   const revealMainWindowForPermissions = async () => {
     try {
       await commands.showMainWindowCommand();

@@ -1092,6 +1092,246 @@ pub fn change_smart_formatting_app_aware_setting(app: AppHandle, enabled: bool) 
 
 #[tauri::command]
 #[specta::specta]
+pub fn change_transcription_languages_setting(
+    app: AppHandle,
+    languages: Vec<String>,
+) -> Result<(), String> {
+    let mut settings = settings::get_settings(&app);
+    settings.transcription_languages = languages;
+    // First-time Hindi selection → seed the Hinglish starter vocabulary
+    // into custom_words. Idempotent via the persisted seeded flag — if a
+    // user later deletes a starter word, we won't re-add it.
+    if !settings.hinglish_starter_seeded
+        && crate::hinglish::user_speaks_hindi(&settings.transcription_languages)
+    {
+        let existing: std::collections::HashSet<String> = settings
+            .custom_words
+            .iter()
+            .map(|w| w.to_lowercase())
+            .collect();
+        for word in crate::hinglish::HINGLISH_STARTER_WORDS {
+            if !existing.contains(&word.to_lowercase()) {
+                settings.custom_words.push((*word).to_string());
+            }
+        }
+        settings.hinglish_starter_seeded = true;
+    }
+    settings::write_settings(&app, settings);
+    Ok(())
+}
+
+/// Persist the user's first + last name and seed each non-empty part into
+/// `custom_words` (so Whisper's `initial_prompt` biases the decoder toward
+/// the correct spelling). Old name entries are NOT removed — users may
+/// still want them recognised; manual deletion lives in the vocab UI.
+#[tauri::command]
+#[specta::specta]
+pub fn set_user_name(
+    app: AppHandle,
+    first_name: String,
+    last_name: String,
+) -> Result<(), String> {
+    let mut settings = settings::get_settings(&app);
+    let first = first_name.trim().to_string();
+    let last = last_name.trim().to_string();
+    settings.user_first_name = first.clone();
+    settings.user_last_name = last.clone();
+
+    let existing: std::collections::HashSet<String> = settings
+        .custom_words
+        .iter()
+        .map(|w| w.to_lowercase())
+        .collect();
+    for part in [first, last] {
+        if !part.is_empty() && !existing.contains(&part.to_lowercase()) {
+            settings.custom_words.push(part);
+        }
+    }
+    settings::write_settings(&app, settings);
+    Ok(())
+}
+
+/// Toggle Knock Mode on/off. Persists the setting and (re)starts or
+/// stops the listener service to match. macOS-only — on other
+/// platforms the service start returns an error which we surface.
+#[tauri::command]
+#[specta::specta]
+pub fn set_knock_mode_enabled(app: AppHandle, enabled: bool) -> Result<(), String> {
+    let mut settings = settings::get_settings(&app);
+    settings.knock_mode_enabled = enabled;
+    settings::write_settings(&app, settings.clone());
+
+    let svc = app.state::<std::sync::Arc<crate::tap_detection::KnockService>>();
+    if enabled {
+        svc.set_threshold(settings.knock_threshold);
+        svc.start(settings.knock_input_device_id.as_deref())?;
+    } else {
+        svc.stop();
+    }
+    Ok(())
+}
+
+/// Begin a 3-double-tap calibration session. Service must be running
+/// (toggle ON). Emits `knock-calibration-progress` events as the user
+/// completes taps and `knock-calibration-done` once the threshold is
+/// derived and persisted.
+#[tauri::command]
+#[specta::specta]
+pub fn start_knock_calibration(app: AppHandle) -> Result<(), String> {
+    use crate::tap_detection::{CalibrationOutcome, CalibrationProgress};
+
+    let svc = app
+        .state::<std::sync::Arc<crate::tap_detection::KnockService>>()
+        .inner()
+        .clone();
+    // Ensure the service is running, even if the user is calibrating
+    // before flipping the toggle.
+    let settings = settings::get_settings(&app);
+    if svc.state() == crate::tap_detection::ServiceState::Stopped {
+        svc.set_threshold(settings.knock_threshold);
+        svc.start(settings.knock_input_device_id.as_deref())?;
+    }
+
+    let app_for_cb = app.clone();
+    let cb: crate::tap_detection::service::CalibrationCallback = std::sync::Arc::new(
+        move |progress: CalibrationProgress, outcome: Option<CalibrationOutcome>| {
+            #[derive(serde::Serialize, Clone)]
+            struct ProgressPayload {
+                collected: usize,
+                required: usize,
+            }
+            let _ = app_for_cb.emit(
+                "knock-calibration-progress",
+                ProgressPayload {
+                    collected: progress.double_taps_collected,
+                    required: progress.double_taps_required,
+                },
+            );
+            if let Some(out) = outcome {
+                // Persist the new threshold + mark calibration complete.
+                let mut s = settings::get_settings(&app_for_cb);
+                s.knock_threshold = out.threshold;
+                s.knock_calibration_completed = true;
+                settings::write_settings(&app_for_cb, s);
+
+                #[derive(serde::Serialize, Clone)]
+                struct DonePayload {
+                    threshold: f32,
+                    noise_floor: f32,
+                    avg_tap_peak: f32,
+                }
+                let _ = app_for_cb.emit(
+                    "knock-calibration-done",
+                    DonePayload {
+                        threshold: out.threshold,
+                        noise_floor: out.noise_floor,
+                        avg_tap_peak: out.avg_tap_peak,
+                    },
+                );
+            }
+        },
+    );
+    svc.start_calibration(cb)
+}
+
+/// Cancel an in-progress calibration session without changing the
+/// stored threshold.
+#[tauri::command]
+#[specta::specta]
+pub fn cancel_knock_calibration(
+    app: AppHandle,
+) -> Result<(), String> {
+    let svc = app.state::<std::sync::Arc<crate::tap_detection::KnockService>>();
+    svc.cancel_calibration();
+    Ok(())
+}
+
+/// Replace the list of "names of people I commonly dictate about" and
+/// seed each name's tokens into `custom_words`. The names list itself is
+/// the source of truth (so the UI can render + edit it cleanly); the
+/// `custom_words` injection is purely a Whisper-decoder hint.
+#[tauri::command]
+#[specta::specta]
+pub fn set_known_names(app: AppHandle, names: Vec<String>) -> Result<(), String> {
+    let mut settings = settings::get_settings(&app);
+    let cleaned: Vec<String> = names
+        .into_iter()
+        .map(|n| n.trim().to_string())
+        .filter(|n| !n.is_empty())
+        .collect();
+    settings.known_names = cleaned.clone();
+
+    let existing: std::collections::HashSet<String> = settings
+        .custom_words
+        .iter()
+        .map(|w| w.to_lowercase())
+        .collect();
+    for full in cleaned {
+        // A "name" may be multi-token ("Priya Sharma"); seed each token
+        // independently so Whisper biases toward each part. Skip dupes.
+        for token in full.split_whitespace() {
+            let lower = token.to_lowercase();
+            if !existing.contains(&lower) {
+                settings.custom_words.push(token.to_string());
+            }
+        }
+    }
+    settings::write_settings(&app, settings);
+    Ok(())
+}
+
+/// Remove a candidate (and its promoted version, if any) from vocab.
+#[tauri::command]
+#[specta::specta]
+pub fn delete_vocab_candidate(app: AppHandle, word: String) -> Result<(), String> {
+    let lower = word.to_lowercase();
+    let mut settings = settings::get_settings(&app);
+    settings
+        .vocab_candidates
+        .retain(|c| c.word.to_lowercase() != lower);
+    settings
+        .custom_words
+        .retain(|w| w.to_lowercase() != lower);
+    settings::write_settings(&app, settings);
+    Ok(())
+}
+
+/// Manually promote a candidate even if its hit count is below the
+/// confidence threshold. Adds it to `custom_words` immediately.
+#[tauri::command]
+#[specta::specta]
+pub fn promote_vocab_candidate(app: AppHandle, word: String) -> Result<(), String> {
+    let lower = word.to_lowercase();
+    let mut settings = settings::get_settings(&app);
+    if let Some(c) = settings
+        .vocab_candidates
+        .iter_mut()
+        .find(|c| c.word.to_lowercase() == lower)
+    {
+        c.promoted = true;
+        if !settings
+            .custom_words
+            .iter()
+            .any(|w| w.to_lowercase() == lower)
+        {
+            settings.custom_words.push(c.word.clone());
+        }
+    }
+    settings::write_settings(&app, settings);
+    Ok(())
+}
+
+#[tauri::command]
+#[specta::specta]
+pub fn clear_vocab_candidates(app: AppHandle) -> Result<(), String> {
+    let mut settings = settings::get_settings(&app);
+    settings.vocab_candidates.clear();
+    settings::write_settings(&app, settings);
+    Ok(())
+}
+
+#[tauri::command]
+#[specta::specta]
 pub fn add_snippet(app: AppHandle, trigger: String, expansion: String) -> Result<String, String> {
     let trimmed_trigger = trigger.trim().to_string();
     if trimmed_trigger.is_empty() || expansion.is_empty() {

@@ -126,7 +126,12 @@ fn email_pipeline(body: &str, cfg: &FormattingConfig, recipient: Option<String>)
         _ => "Hi,\n\n".to_string(),
     };
     let body_fmt = paragraphs.join("\n\n");
-    format!("{}{}\n\nBest regards,", greeting, body_fmt)
+    let signature = cfg.user_full_name.trim();
+    if signature.is_empty() {
+        format!("{}{}\n\nBest regards,", greeting, body_fmt)
+    } else {
+        format!("{}{}\n\nBest regards,\n{}", greeting, body_fmt, signature)
+    }
 }
 
 // ---------- local helpers ------------------------------------------------
@@ -174,7 +179,9 @@ fn ensure_terminal_punctuation(text: &str) -> String {
         return String::new();
     }
     let last = trimmed.chars().last().unwrap();
-    if matches!(last, '.' | '!' | '?' | ':' | ';') {
+    // Comma included so user-dictated trailing commas like "thanks comma"
+    // → "Thanks," don't get a stray "." appended after.
+    if matches!(last, '.' | '!' | '?' | ':' | ';' | ',') {
         trimmed.to_string()
     } else {
         format!("{}.", trimmed)

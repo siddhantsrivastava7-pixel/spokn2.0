@@ -33,26 +33,46 @@ pub fn detect(text: &str) -> Intent {
 }
 
 fn detect_email(text: &str) -> Option<Intent> {
-    static RE: Lazy<Regex> = Lazy::new(|| {
+    // Verb-led with body marker. Matches:
+    //   "Write an email to Raj saying ..."
+    //   "Send a mail to Priya about ..."
+    //   "Compose email to Rohit, ..."
+    //   "Email to Raj saying ..."
+    //   "Hey can you write an email to Raj saying ..."  (drops the ^ anchor
+    //   so a small preamble is fine — humans don't always start clean)
+    static RE_TO_BODY: Lazy<Regex> = Lazy::new(|| {
         Regex::new(
-            r"(?i)^\s*(?:write|send|compose|draft)?\s*(?:an?\s+)?(?:email|mail)\s+to\s+([a-z][a-z\s]{0,40}?)\s+(?:saying|that|with|about)\b",
+            r"(?i)\b(?:write|send|compose|draft)?\s*(?:an?\s+)?(?:email|mail)\s+to\s+([a-z][a-z\s'\-]{0,40}?)\s*(?:saying|that|with|about|[,:\u{2014}\u{2013}])\s+",
         )
         .unwrap()
     });
-    static RE_SIMPLE: Lazy<Regex> = Lazy::new(|| {
-        Regex::new(r"(?i)^\s*(?:write|send|compose)\s+(?:an?\s+)?(?:email|mail)\s+to\s+([a-z][a-z\s]{0,40}?)\s*[,.:]")
-            .unwrap()
+    // Verb required, recipient WITHOUT the explicit "to":
+    //   "Email Raj saying ..."
+    //   "Email Raj about ..."
+    //   "Send Priya an email about ..."   (handled by RE_TO_BODY because it
+    //   has "an email")
+    static RE_NAME_BODY: Lazy<Regex> = Lazy::new(|| {
+        Regex::new(
+            r"(?i)\b(?:email|mail)\s+([a-z][a-z\s'\-]{0,40}?)\s*(?:saying|that|with|about|[,:\u{2014}\u{2013}])\s+",
+        )
+        .unwrap()
+    });
+    // No recipient at all:
+    //   "Write an email about the launch"
+    //   "Compose an email saying I'll be late"
+    static RE_NO_RECIPIENT: Lazy<Regex> = Lazy::new(|| {
+        Regex::new(
+            r"(?i)\b(?:write|send|compose|draft)\s+(?:an?\s+)?(?:email|mail)\s+(?:saying|about|that|with|[,:\u{2014}\u{2013}])\s+",
+        )
+        .unwrap()
     });
 
-    if let Some(caps) = RE.captures(text) {
-        let recipient = caps.get(1).map(|m| m.as_str().trim().to_string());
-        let body_start = caps.get(0).map(|m| m.end()).unwrap_or(0);
-        return Some(Intent::Email { recipient, body_start });
-    }
-    if let Some(caps) = RE_SIMPLE.captures(text) {
-        let recipient = caps.get(1).map(|m| m.as_str().trim().to_string());
-        let body_start = caps.get(0).map(|m| m.end()).unwrap_or(0);
-        return Some(Intent::Email { recipient, body_start });
+    for re in [&*RE_TO_BODY, &*RE_NAME_BODY, &*RE_NO_RECIPIENT] {
+        if let Some(caps) = re.captures(text) {
+            let recipient = caps.get(1).map(|m| m.as_str().trim().to_string());
+            let body_start = caps.get(0).map(|m| m.end()).unwrap_or(0);
+            return Some(Intent::Email { recipient, body_start });
+        }
     }
     None
 }
@@ -162,6 +182,50 @@ mod tests {
     fn detects_write_email() {
         match detect("write an email to Priya, thanks for your help") {
             Intent::Email { recipient, .. } => assert!(recipient.is_some()),
+            other => panic!("expected email, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn detects_email_without_to() {
+        // "Email Raj about meeting" — no "to" keyword.
+        match detect("email Raj about the meeting tomorrow") {
+            Intent::Email { recipient, .. } => {
+                assert_eq!(recipient.as_deref(), Some("Raj"));
+            }
+            other => panic!("expected email, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn detects_email_no_recipient() {
+        // "Compose an email about the launch" — no recipient at all.
+        match detect("compose an email about the upcoming launch") {
+            Intent::Email { recipient, .. } => {
+                assert!(recipient.is_none() || recipient.as_deref() == Some(""));
+            }
+            other => panic!("expected email, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn detects_email_with_preamble() {
+        // Common conversational lead-in.
+        match detect("hey, write an email to Raj saying we're delayed") {
+            Intent::Email { recipient, .. } => {
+                assert_eq!(recipient.as_deref(), Some("Raj"));
+            }
+            other => panic!("expected email, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn detects_email_with_colon() {
+        // Colon as body marker, not "saying".
+        match detect("email to Priya: please review the proposal") {
+            Intent::Email { recipient, .. } => {
+                assert_eq!(recipient.as_deref(), Some("Priya"));
+            }
             other => panic!("expected email, got {:?}", other),
         }
     }

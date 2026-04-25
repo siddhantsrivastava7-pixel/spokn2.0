@@ -540,14 +540,32 @@ impl TranscriptionManager {
                                 Some(normalized)
                             };
 
+                            // Build the initial_prompt. Order matters: a
+                            // Hinglish seed phrase first to establish the
+                            // Roman-Hindi register for Whisper's decoder,
+                            // then the user's custom_words for vocabulary
+                            // bias. Either / both may be empty.
+                            let mut prompt_parts: Vec<String> = Vec::new();
+                            if crate::hinglish::user_speaks_hindi(
+                                &settings.transcription_languages,
+                            ) {
+                                prompt_parts.push(
+                                    crate::hinglish::HINGLISH_SEED_PROMPT.to_string(),
+                                );
+                            }
+                            if !settings.custom_words.is_empty() {
+                                prompt_parts.push(settings.custom_words.join(", "));
+                            }
+                            let initial_prompt = if prompt_parts.is_empty() {
+                                None
+                            } else {
+                                Some(prompt_parts.join(" "))
+                            };
+
                             let params = WhisperInferenceParams {
                                 language: whisper_language,
                                 translate: settings.translate_to_english,
-                                initial_prompt: if settings.custom_words.is_empty() {
-                                    None
-                                } else {
-                                    Some(settings.custom_words.join(", "))
-                                },
+                                initial_prompt,
                                 ..Default::default()
                             };
 

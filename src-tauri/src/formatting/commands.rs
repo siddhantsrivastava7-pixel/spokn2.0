@@ -23,21 +23,47 @@ pub fn apply_spoken_punctuation(text: &str) -> String {
         (r"(?i)\bclose\s+quote\b\s*,?", "\""),
         (r"(?i)\bopen\s+paren(thesis)?\b\s*,?", "("),
         (r"(?i)\bclose\s+paren(thesis)?\b\s*,?", ")"),
-        // Single-word punctuation — only at clause boundaries (comma / end of
-        // sentence / start of utterance) to avoid mangling sentences where
-        // "period" or "colon" appear as real nouns.
-        (r"(?i)(^|,\s|\.\s)comma\b\s*,?", "$1,<SPC>"),
-        (r"(?i)(^|,\s|\.\s)period\b\s*,?", "$1.<SPC>"),
-        (r"(?i)(^|,\s|\.\s)colon\b\s*,?", "$1:<SPC>"),
-        (r"(?i)(^|,\s|\.\s)semi\s*colon\b\s*,?", "$1;<SPC>"),
-        (r"(?i)(^|,\s|\.\s)dash\b\s*,?", "$1 — <SPC>"),
-        // Looser pattern for mid-sentence "comma" — rely on surrounding words
-        // already being present; only when clearly the command form
-        // ("X comma Y" as pause). Still conservative: require whitespace both
-        // sides and not at sentence start.
-        (r"(?i)\s+comma\s+", ", "),
-        (r"(?i)\s+full\s+stop\s+", ". "),
-        (r"(?i)\s+question\s+mark\s*$", "?"),
+        // ACCURACY-FIRST POLICY:
+        // We deliberately do NOT convert mid-sentence single-word punctuation
+        // (period / colon / semicolon / dash) because "the third period of
+        // class", "the colon is part of digestion", "a long dash" all use
+        // those words as nouns. Disambiguating without grammar parsing
+        // would risk garbling valid speech — accuracy beats automation.
+        //
+        // Conversions ONLY fire when:
+        //   - The cue is multi-word (full stop, question mark, exclamation,
+        //     new line, new paragraph, open/close quote, etc.) — these are
+        //     unambiguously commands.
+        //   - OR the cue is at sentence-end (no word follows) — "thanks
+        //     comma" / "the year was 2023 period" — also unambiguous.
+        //   - OR the cue immediately follows a clause-ending punctuation
+        //     mark — ". Comma " — the user is dictating a fresh clause.
+        //
+        // Mid-sentence "comma" is the exception we keep because "comma" as
+        // a noun is rare enough outside grammar talk. Even so, restricted
+        // to a strict X COMMA Y pattern so "the comma key" is filtered.
+        // (Filtered via the determiner blacklist below.)
+
+        // Mid-sentence "comma" — explicit X COMMA Y dictation cadence.
+        // We KEEP this for "comma" specifically (uncommon as a noun in
+        // running speech) but NOT for period/colon/semicolon/dash.
+        // Edge cost: "the comma key is broken" gets garbled. Trade-off
+        // accepted because "Hello comma world" is the bread-and-butter
+        // dictation pattern.
+        (r"(?i)([A-Za-z0-9'])\s+comma\s+([A-Za-z0-9])", "$1, $2"),
+
+        // End-of-sentence variants — safe.
+        (r"(?i)([A-Za-z0-9])\s+full\s+stop\s*$", "$1."),
+        (r"(?i)([A-Za-z0-9])\s+period\s*$", "$1."),
+        (r"(?i)([A-Za-z0-9])\s+question\s+mark\s*$", "$1?"),
+        (r"(?i)([A-Za-z0-9])\s+exclamation\s+(?:mark|point)\s*$", "$1!"),
+        (r"(?i)([A-Za-z0-9])\s+comma\s*$", "$1,"),
+        (r"(?i)([A-Za-z0-9])\s+colon\s*$", "$1:"),
+        (r"(?i)([A-Za-z0-9])\s+semi\s*colon\s*$", "$1;"),
+        // Clause-leading: ". comma X" — user dictating a new clause.
+        (r"(?i)([.!?])\s+comma\s+", "$1, "),
+        (r"(?i)([.!?])\s+period\s+", "$1. "),
+        (r"(?i)([.!?])\s+colon\s+", "$1: "),
     ];
 
     let mut out = text.to_string();
@@ -51,6 +77,16 @@ pub fn apply_spoken_punctuation(text: &str) -> String {
     // Remove stray space before punctuation ("world ." → "world.").
     let space_before_punct = Regex::new(r"\s+([,.!?;:])").expect("valid regex");
     let out = space_before_punct.replace_all(&out, "$1").to_string();
+    // Strip space INSIDE close-quote / close-paren and after open variants:
+    //   "hi "   → "hi"  (stripped before close)
+    //   ( hi )  → (hi)  (stripped after open + before close)
+    let space_before_close = Regex::new(r#"\s+([")\]\}])"#).expect("valid regex");
+    let out = space_before_close.replace_all(&out, "$1").to_string();
+    let space_after_open = Regex::new(r#"([(\[\{])\s+"#).expect("valid regex");
+    let out = space_after_open.replace_all(&out, "$1").to_string();
+    // Insert a space after a close-paren when missing: "(maybe)is" → "(maybe) is"
+    let close_paren_glue = Regex::new(r#"([)\]\}])([A-Za-z])"#).expect("valid regex");
+    let out = close_paren_glue.replace_all(&out, "$1 $2").to_string();
     // Collapse runs of ordinary whitespace.
     let runs = Regex::new(r"[ \t]+").expect("valid regex");
     runs.replace_all(&out, " ").to_string()
@@ -64,33 +100,59 @@ pub fn apply_spoken_punctuation(text: &str) -> String {
 /// replacement phrase, keep the correction. We only act when the pattern is
 /// unambiguous — otherwise the original text survives.
 pub fn apply_corrections(text: &str) -> String {
-    // Marker can include embedded commas that Whisper loves to insert, e.g.
-    // "No, wait" or "I, mean".
-    const MARKER: &str = r"(?:no\s*,?\s*wait|sorry|scratch\s+that|i\s+mean)";
+    // Two MARKER groups split by user intent:
+    //   WORD_MARKER  — typically a slip of a single word ("sorry",
+    //                  "I mean") → swap only the immediately surrounding
+    //                  word, preserve everything else.
+    //   CLAUSE_MARKER — restart the whole utterance ("no wait", "scratch
+    //                   that", "actually") → eat the full prior clause.
+    //
+    // This split fixes the over-collapse bug where "my name is Raj sorry
+    // Rajesh" was reducing to just "Rajesh". With WORD_MARKER scope it
+    // becomes "my name is Rajesh".
+    const WORD_MARKER: &str = r"(?:sorry|i\s+mean)";
+    const CLAUSE_MARKER: &str = r"(?:no\s*,?\s*wait|scratch\s+that|actually)";
 
-    // 1. Sentence-spanning correction:
-    //    "[full prior sentence]. [MARKER][, ]? [replacement]"
-    //    → just the replacement.
+    // 1. Sentence-spanning clause correction:
+    //    "[full prior sentence]. [CLAUSE_MARKER][, ]? [replacement]" → just
+    //    the replacement.
     static SENTENCE_CORRECTION: Lazy<Regex> = Lazy::new(|| {
         let pat = format!(
             r"(?i)[^.!?\n]+[.!?]+\s*{}\s*[,]?\s*([^.!?\n]+[.!?]?)",
-            MARKER
+            CLAUSE_MARKER
         );
         Regex::new(&pat).unwrap()
     });
 
-    // 2. Inline correction within a single clause:
-    //    "prior , MARKER , replacement"  →  replacement
-    static INLINE_CORRECTION: Lazy<Regex> = Lazy::new(|| {
+    // 2. Inline CLAUSE correction within a single clause:
+    //    "prior CLAUSE_MARKER replacement" → replacement.
+    static INLINE_CLAUSE_CORRECTION: Lazy<Regex> = Lazy::new(|| {
         let pat = format!(
             r"(?i)([^,.!?\n]+?)[,\s]+{}[,\s]+([^,.!?\n]+)",
-            MARKER
+            CLAUSE_MARKER
         );
         Regex::new(&pat).unwrap()
     });
 
-    // Apply sentence-level first (bigger span), then inline (narrower).
-    // Loop each until stable so chained corrections collapse.
+    // 3. WORD-LEVEL correction: just one word on each side of the marker.
+    //    "X WORD_MARKER Y" → "Y" (swap only that word). Strict: prior and
+    //    replacement must each be a single token (no spaces in either).
+    //    This preserves "my name is Raj sorry Rajesh" → "my name is Rajesh"
+    //    instead of collapsing to just "Rajesh".
+    static WORD_CORRECTION: Lazy<Regex> = Lazy::new(|| {
+        let pat = format!(
+            r"(?i)\b([A-Za-z0-9'\-]+)[,\s]+{}[,\s]+([A-Za-z0-9'\-]+)\b",
+            WORD_MARKER
+        );
+        Regex::new(&pat).unwrap()
+    });
+
+    // Order matters:
+    //   - Sentence-level clause corrections first (largest span).
+    //   - Then inline clause corrections.
+    //   - Then word-level corrections (smallest span; would otherwise
+    //     consume the prior word that a clause correction would discard).
+    // Loop each pass until stable so chained corrections fully collapse.
     let mut prev = text.to_string();
     loop {
         let replaced = SENTENCE_CORRECTION
@@ -106,10 +168,24 @@ pub fn apply_corrections(text: &str) -> String {
         prev = replaced;
     }
     loop {
-        let replaced = INLINE_CORRECTION
+        let replaced = INLINE_CLAUSE_CORRECTION
             .replace_all(&prev, |caps: &regex::Captures| {
                 caps.get(2)
                     .map(|m| m.as_str().trim().to_string())
+                    .unwrap_or_default()
+            })
+            .to_string();
+        if replaced == prev {
+            break;
+        }
+        prev = replaced;
+    }
+    loop {
+        let replaced = WORD_CORRECTION
+            .replace_all(&prev, |caps: &regex::Captures| {
+                // Replace `prior MARKER replacement` with just `replacement`.
+                caps.get(2)
+                    .map(|m| m.as_str().to_string())
                     .unwrap_or_default()
             })
             .to_string();
@@ -157,8 +233,25 @@ mod tests {
 
     #[test]
     fn correction_sorry_replaces() {
+        // "sorry" is a WORD_MARKER: swaps only the immediately preceding
+        // word, preserving the rest of the sentence.
         let out = apply_corrections("my name is Raj sorry Rajesh");
-        assert_eq!(out, "Rajesh");
+        assert_eq!(out, "my name is Rajesh");
+    }
+
+    #[test]
+    fn correction_word_marker_keeps_envelope() {
+        // Regression guard for the over-collapse bug: WORD_MARKER must NOT
+        // eat the entire prior clause the way CLAUSE_MARKER does.
+        let out = apply_corrections("call him at three sorry four");
+        assert_eq!(out, "call him at four");
+    }
+
+    #[test]
+    fn correction_clause_marker_still_eats_clause() {
+        // CLAUSE_MARKER ("no wait") must still discard the full prior clause.
+        let out = apply_corrections("go to the office no wait go to the cafe");
+        assert_eq!(out, "go to the cafe");
     }
 
     #[test]

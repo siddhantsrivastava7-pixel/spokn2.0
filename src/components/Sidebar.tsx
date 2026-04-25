@@ -11,6 +11,8 @@ import {
   Headphones,
   Settings as SettingsIcon,
   Sparkles,
+  Globe,
+  BookOpen,
 } from "lucide-react";
 import SpoknWordmark from "./icons/SpoknWordmark";
 import { SegmentedControl } from "./ui/SegmentedControl";
@@ -26,6 +28,8 @@ import {
   SnippetsSettings,
   VoiceAudioSettings,
   BehaviorSettings,
+  LanguageSettings,
+  VocabularySettings,
 } from "./settings";
 
 export type SidebarSection = keyof typeof SECTIONS_CONFIG;
@@ -69,6 +73,13 @@ export const SECTIONS_CONFIG = {
     enabled: () => true,
     simple: true,
   },
+  language: {
+    labelKey: "sidebar.language",
+    icon: Globe,
+    component: LanguageSettings,
+    enabled: () => true,
+    simple: true,
+  },
   models: {
     labelKey: "sidebar.models",
     icon: Cpu,
@@ -80,6 +91,13 @@ export const SECTIONS_CONFIG = {
     labelKey: "sidebar.snippets",
     icon: Zap,
     component: SnippetsSettings,
+    enabled: () => true,
+    simple: true,
+  },
+  vocabulary: {
+    labelKey: "sidebar.vocabulary",
+    icon: BookOpen,
+    component: VocabularySettings,
     enabled: () => true,
     simple: true,
   },

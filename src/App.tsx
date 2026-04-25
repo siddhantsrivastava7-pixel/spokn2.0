@@ -14,17 +14,21 @@ import Footer from "./components/footer";
 import Onboarding, { AccessibilityOnboarding } from "./components/onboarding";
 import LanguageOnboarding from "./components/onboarding/LanguageOnboarding";
 import ModelDownloading from "./components/onboarding/ModelDownloading";
+import UserInfoOnboarding from "./components/onboarding/UserInfoOnboarding";
 import { Sidebar, SidebarSection, SECTIONS_CONFIG } from "./components/Sidebar";
+import { RESET_ONBOARDING_EVENT } from "./components/settings/ResetOnboardingButton";
 import QuickSettings from "./components/QuickSettings";
 import { Zap } from "lucide-react";
 import { useSettings } from "./hooks/useSettings";
 import { useSettingsStore } from "./stores/settingsStore";
+import { useModelStore } from "./stores/modelStore";
 import { commands } from "@/bindings";
 import { getLanguageDirection, initializeRTL } from "@/lib/utils/rtl";
 
 type OnboardingStep =
   | "accessibility"
   | "language"
+  | "user_info"
   | "downloading"
   | "model"
   | "done";
@@ -61,6 +65,21 @@ function App() {
 
   useEffect(() => {
     checkOnboardingStatus();
+  }, []);
+
+  // Dev/QA hook: AdvancedSettings → Replay welcome flow dispatches this
+  // event. We rewind the state machine to the start so the entire
+  // language picker → permissions → model selection sequence plays out
+  // again. Models stay downloaded; settings stay intact.
+  useEffect(() => {
+    const handler = () => {
+      hasCompletedPostOnboardingInit.current = false;
+      setIsReturningUser(false);
+      setRecommendedModelId(null);
+      setOnboardingStep("language");
+    };
+    window.addEventListener(RESET_ONBOARDING_EVENT, handler);
+    return () => window.removeEventListener(RESET_ONBOARDING_EVENT, handler);
   }, []);
 
   // Initialize RTL direction when language changes
@@ -134,6 +153,37 @@ function App() {
       unlisten.then((fn) => fn());
     };
   }, [t]);
+
+  // Listen for the auto-detect "this looks like Hinglish" event from the
+  // Rust pipeline. Fires at most once per app install (Rust persists the
+  // shown flag), so no debouncing needed here. Offers a one-tap action to
+  // add Hindi to the user's transcription_languages.
+  useEffect(() => {
+    const unlisten = listen("hinglish-detected", () => {
+      const current = (settings as any)?.transcription_languages ?? [];
+      if (current.includes("hi")) return; // double-safety: already enabled
+      // eslint-disable-next-line i18next/no-literal-string
+      toast("Looks like you dictate in Hinglish", {
+        // eslint-disable-next-line i18next/no-literal-string
+        description:
+          "Enable Hindi in your languages for noticeably better accuracy.",
+        duration: 12000,
+        action: {
+          // eslint-disable-next-line i18next/no-literal-string
+          label: "Enable",
+          onClick: () => {
+            const next = Array.from(new Set([...current, "hi"]));
+            (updateSetting as any)("transcription_languages", next);
+            // eslint-disable-next-line i18next/no-literal-string
+            toast.success("Hindi enabled. Try a new dictation.");
+          },
+        },
+      });
+    });
+    return () => {
+      unlisten.then((fn) => fn());
+    };
+  }, [settings, updateSetting]);
 
   // Listen for paste failures and show a toast.
   // The technical error detail is logged to handy.log on the Rust side
@@ -226,26 +276,48 @@ function App() {
 
         setOnboardingStep("done");
       } else {
-        // New user - start full onboarding
+        // New user — flow is Language → Accessibility → Download → Done.
+        // Lead with the friendly "what do you speak?" picker so users can
+        // confirm Spokn supports them BEFORE granting OS-level permissions.
         setIsReturningUser(false);
-        setOnboardingStep("accessibility");
+        setOnboardingStep("language");
       }
     } catch (error) {
       console.error("Failed to check onboarding status:", error);
-      setOnboardingStep("accessibility");
+      setOnboardingStep("language");
     }
   };
 
   const handleAccessibilityComplete = () => {
     // Returning users already have models, skip to main app.
-    // New users go through the language picker → auto download.
-    setOnboardingStep(isReturningUser ? "done" : "language");
+    // New users have just granted permissions; proceed to model download
+    // (recommendedModelId was set in handleLanguagesPicked above).
+    if (isReturningUser) {
+      setOnboardingStep("done");
+    } else if (recommendedModelId) {
+      setOnboardingStep("downloading");
+    } else {
+      // Edge case: somehow we're at accessibility without a recommended
+      // model. Fall back to manual model picker.
+      setOnboardingStep("model");
+    }
   };
 
   const handleLanguagesPicked = (modelId: string) => {
     setRecommendedModelId(modelId);
-    setOnboardingStep("downloading");
+    // Pre-warm: kick off the model download NOW, in the background, while
+    // the user moves through the next steps. By the time they reach the
+    // download screen the model may already be largely downloaded.
+    // ModelDownloading on mount checks `isDownloading` before starting,
+    // so this won't double-fire.
+    void useModelStore
+      .getState()
+      .downloadModel(modelId)
+      .catch((e) => console.warn("Background pre-download failed:", e));
+    setOnboardingStep("user_info");
   };
+
+  const handleUserInfoComplete = () => setOnboardingStep("accessibility");
 
   const handleDownloadComplete = () => {
     setOnboardingStep("done");
@@ -267,6 +339,10 @@ function App() {
 
   if (onboardingStep === "language") {
     return <LanguageOnboarding onComplete={handleLanguagesPicked} />;
+  }
+
+  if (onboardingStep === "user_info") {
+    return <UserInfoOnboarding onComplete={handleUserInfoComplete} />;
   }
 
   if (onboardingStep === "downloading" && recommendedModelId) {

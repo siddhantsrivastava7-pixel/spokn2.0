@@ -16,6 +16,9 @@ pub mod formatter;
 pub mod intent;
 pub mod numbers;
 
+#[cfg(test)]
+mod test_corpus;
+
 pub use app_context::{detect_app_kind, AppKind};
 pub use formatter::format;
 
@@ -53,6 +56,9 @@ pub struct FormattingConfig {
     /// Whether the formatter may override `mode` based on the active app
     /// (e.g. force Raw inside a terminal).
     pub detect_app_context: bool,
+    /// User's full name, used as the email-mode signature ("Best regards,
+    /// <name>"). Empty string disables auto-signing.
+    pub user_full_name: String,
 }
 
 impl Default for FormattingConfig {
@@ -62,6 +68,7 @@ impl Default for FormattingConfig {
             mode: FormattingMode::Smart,
             custom_fillers: Vec::new(),
             detect_app_context: true,
+            user_full_name: String::new(),
         }
     }
 }
@@ -82,6 +89,7 @@ mod integration_tests {
             mode,
             custom_fillers: Vec::new(),
             detect_app_context: false,
+            user_full_name: String::new(),
         }
     }
 
@@ -166,6 +174,29 @@ mod integration_tests {
         );
         assert!(out.starts_with("Hi"));
         assert!(out.contains("Best regards"));
+    }
+
+    #[test]
+    fn email_mode_signs_with_user_name() {
+        let mut c = cfg(FormattingMode::Email);
+        c.user_full_name = "Siddhant Srivastava".to_string();
+        let out = format("thank you for your time", &c, &ctx());
+        assert!(
+            out.contains("Best regards,\nSiddhant Srivastava"),
+            "got: {}",
+            out
+        );
+    }
+
+    #[test]
+    fn email_mode_unsigned_when_name_blank() {
+        // No name set → no trailing newline + name; signature line stays bare.
+        let out = format(
+            "thank you for your time",
+            &cfg(FormattingMode::Email),
+            &ctx(),
+        );
+        assert!(out.trim_end().ends_with("Best regards,"), "got: {}", out);
     }
 
     #[test]

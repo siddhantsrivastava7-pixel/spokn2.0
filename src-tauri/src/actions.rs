@@ -357,6 +357,19 @@ pub(crate) async fn process_transcription_output(
     let mut post_processed_text: Option<String> = None;
     let mut post_process_prompt: Option<String> = None;
 
+    // Auto-detect Hinglish on the raw transcription. If the user dictates
+    // Hinglish but never selected Hindi, surface a one-time toast suggesting
+    // they enable Hindi. The `hinglish_prompt_shown` flag prevents repeats.
+    if !settings.hinglish_prompt_shown
+        && !crate::hinglish::user_speaks_hindi(&settings.transcription_languages)
+        && crate::hinglish::looks_like_hinglish(transcription)
+    {
+        let _ = app.emit("hinglish-detected", ());
+        let mut updated = settings.clone();
+        updated.hinglish_prompt_shown = true;
+        crate::settings::write_settings(app, updated);
+    }
+
     if let Some(converted_text) = maybe_convert_chinese_variant(&settings, transcription).await {
         final_text = converted_text;
     }
@@ -389,6 +402,7 @@ pub(crate) async fn process_transcription_output(
             mode: settings.smart_formatting_mode.into(),
             custom_fillers: settings.custom_filler_words.clone().unwrap_or_default(),
             detect_app_context: settings.smart_formatting_app_aware,
+            user_full_name: full_name(&settings.user_first_name, &settings.user_last_name),
         };
         let ctx = FormattingContext {
             app_kind: detect_app_kind(),
@@ -767,3 +781,40 @@ pub static ACTION_MAP: Lazy<HashMap<String, Arc<dyn ShortcutAction>>> = Lazy::ne
     );
     map
 });
+
+/// Knock Mode binding identifier. Uses the regular TranscribeAction
+/// path so there is exactly ONE recording pipeline; this just gives
+/// us a distinct `binding_id` for telemetry / state separation.
+pub const KNOCK_MODE_BINDING_ID: &str = "knock_mode";
+
+/// Triggered by the [`crate::tap_detection::KnockService`] callback.
+/// Mirrors the global-shortcut path: if the recorder is idle, start;
+/// otherwise stop. Reuses [`TranscribeAction`] so audio feedback,
+/// overlay, mute, and the transcription pipeline behave identically
+/// to a hotkey-triggered session.
+pub fn trigger_knock_mode(app: &AppHandle) {
+    let rm = app.state::<Arc<AudioRecordingManager>>();
+    let action: Arc<dyn ShortcutAction> =
+        Arc::new(TranscribeAction { post_process: false });
+    if rm.is_recording() {
+        debug!("Knock Mode: stop");
+        action.stop(app, KNOCK_MODE_BINDING_ID, "double-tap");
+    } else {
+        debug!("Knock Mode: start");
+        action.start(app, KNOCK_MODE_BINDING_ID, "double-tap");
+    }
+}
+
+/// Combine first + last into a display name, trimming each side and
+/// collapsing the inner separator. Returns "" when both are blank so the
+/// formatter can short-circuit the signature.
+fn full_name(first: &str, last: &str) -> String {
+    let f = first.trim();
+    let l = last.trim();
+    match (f.is_empty(), l.is_empty()) {
+        (true, true) => String::new(),
+        (false, true) => f.to_string(),
+        (true, false) => l.to_string(),
+        (false, false) => format!("{} {}", f, l),
+    }
+}

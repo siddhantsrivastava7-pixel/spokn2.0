@@ -93,6 +93,28 @@ pub struct LLMPrompt {
     pub prompt: String,
 }
 
+/// Candidate vocabulary word — captured from a user edit but not yet
+/// trusted enough to feed into Whisper's decoder. Promoted to
+/// `custom_words` once `hits >= VOCAB_PROMOTE_THRESHOLD`. Keeping the
+/// promotion gated avoids polluting decoder hints from one-off typos or
+/// accidental mid-edit captures.
+#[derive(Serialize, Deserialize, Debug, Clone, Type)]
+pub struct VocabCandidate {
+    pub word: String,
+    #[serde(default)]
+    pub hits: u32,
+    #[serde(default)]
+    pub first_seen: i64,
+    #[serde(default)]
+    pub last_seen: i64,
+    #[serde(default)]
+    pub promoted: bool,
+}
+
+/// Number of independent confirmations needed before a learned word is
+/// promoted from `vocab_candidates` into the active `custom_words` list.
+pub const VOCAB_PROMOTE_THRESHOLD: u32 = 3;
+
 /// A text snippet. When the user speaks the `trigger`, Spokn expands it
 /// into `expansion` before the text is injected. Case-insensitive
 /// word-boundary match; longer triggers beat shorter ones.
@@ -450,8 +472,63 @@ pub struct AppSettings {
     pub smart_formatting_mode: SmartFormattingMode,
     #[serde(default = "default_smart_formatting_app_aware")]
     pub smart_formatting_app_aware: bool,
+    /// Languages the user typically dictates in. Persisted from the welcome
+    /// screen's multi-select so settings can show + edit it later.
+    #[serde(default)]
+    pub transcription_languages: Vec<String>,
+    /// Auto-learned vocabulary candidates. See [`VocabCandidate`].
+    #[serde(default)]
+    pub vocab_candidates: Vec<VocabCandidate>,
+    /// True after Spokn has auto-injected the Hinglish starter pack into
+    /// `custom_words` (triggered the first time Hindi is added to
+    /// `transcription_languages`). Prevents re-seeding words the user has
+    /// since deleted.
+    #[serde(default)]
+    pub hinglish_starter_seeded: bool,
+    /// True after Spokn has shown the auto-detect "Looks like you dictate
+    /// in Hinglish — enable Hindi?" toast. Prevents nagging the user.
+    #[serde(default)]
+    pub hinglish_prompt_shown: bool,
     #[serde(default)]
     pub snippets: Vec<Snippet>,
+    /// User's first name. Captured during onboarding so the formatter can
+    /// (a) seed it into Whisper's `custom_words` (so the spelling stays
+    /// stable across transcriptions) and (b) auto-sign emails after
+    /// "Best regards,". Empty string when not set.
+    #[serde(default)]
+    pub user_first_name: String,
+    /// User's last name. Same purpose as `user_first_name`. Optional —
+    /// emails fall back to first-name-only signature when blank.
+    #[serde(default)]
+    pub user_last_name: String,
+    /// Commonly-used names of OTHER people the user dictates about
+    /// (partner, team-mates, frequent contacts). Distinct from
+    /// `user_first_name` / `user_last_name` so the email signature only
+    /// uses the user's own name. Each entry is added to Whisper's
+    /// `custom_words` so the decoder learns the spelling.
+    #[serde(default)]
+    pub known_names: Vec<String>,
+    /// Knock Mode (macOS-only): a low-power audio listener fires
+    /// start/stop on a double-tap near the trackpad. Default OFF — when
+    /// enabled, the macOS mic indicator stays lit continuously.
+    #[serde(default)]
+    pub knock_mode_enabled: bool,
+    /// Calibrated peak-amplitude threshold for tap detection. Higher =
+    /// stricter (fewer false positives, more missed taps). Conservative
+    /// default; calibration sharpens it per-device.
+    #[serde(default = "default_knock_threshold")]
+    pub knock_threshold: f32,
+    /// Optional override for the input device used by the tap listener.
+    /// `None` = prefer built-in MacBook mic, fall back to default input.
+    /// Distinct from `selected_microphone` (used for STT) so the user can
+    /// keep a USB headset for dictation while taps are heard by the
+    /// laptop mic itself.
+    #[serde(default)]
+    pub knock_input_device_id: Option<String>,
+    /// True after the user has run the 3-tap calibration at least once.
+    /// Used by the UI to nudge first-time enablers.
+    #[serde(default)]
+    pub knock_calibration_completed: bool,
 }
 
 /// Mirror of `crate::formatting::FormattingMode` that lives in the settings
@@ -484,6 +561,13 @@ impl From<SmartFormattingMode> for crate::formatting::FormattingMode {
 
 fn default_smart_formatting_enabled() -> bool {
     true
+}
+
+/// Conservative default chosen to favour false negatives over false
+/// positives — a missed knock is fine, a phantom recording is not.
+/// Calibration moves this per-device.
+pub fn default_knock_threshold() -> f32 {
+    0.18
 }
 
 fn default_smart_formatting_app_aware() -> bool {
@@ -875,7 +959,18 @@ pub fn get_default_settings() -> AppSettings {
         smart_formatting_enabled: default_smart_formatting_enabled(),
         smart_formatting_mode: SmartFormattingMode::default(),
         smart_formatting_app_aware: default_smart_formatting_app_aware(),
+        transcription_languages: Vec::new(),
+        vocab_candidates: Vec::new(),
+        hinglish_starter_seeded: false,
+        hinglish_prompt_shown: false,
         snippets: Vec::new(),
+        user_first_name: String::new(),
+        user_last_name: String::new(),
+        known_names: Vec::new(),
+        knock_mode_enabled: false,
+        knock_threshold: default_knock_threshold(),
+        knock_input_device_id: None,
+        knock_calibration_completed: false,
     }
 }
 

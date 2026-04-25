@@ -10,8 +10,10 @@ mod correction_capture;
 mod formatting;
 mod hardware;
 mod helpers;
+mod hinglish;
 mod model_recommend;
 mod snippets;
+mod tap_detection;
 mod input;
 mod llm_client;
 mod managers;
@@ -169,6 +171,32 @@ fn initialize_core_logic(app_handle: &AppHandle) {
     app_handle.manage(model_manager.clone());
     app_handle.manage(transcription_manager.clone());
     app_handle.manage(history_manager.clone());
+
+    // Knock Mode (macOS-only audio engine; settings exist on every
+    // platform). Always-construct so the Tauri command lookups don't
+    // crash; the service only opens a stream when explicitly started.
+    {
+        let app_for_cb = app_handle.clone();
+        let cb: tap_detection::service::DoubleTapCallback =
+            Arc::new(move || actions::trigger_knock_mode(&app_for_cb));
+        let initial_settings = settings::get_settings(app_handle);
+        let knock_service = Arc::new(tap_detection::KnockService::new(
+            cb,
+            initial_settings.knock_threshold,
+        ));
+        app_handle.manage(knock_service.clone());
+
+        if initial_settings.knock_mode_enabled {
+            #[cfg(target_os = "macos")]
+            {
+                if let Err(e) =
+                    knock_service.start(initial_settings.knock_input_device_id.as_deref())
+                {
+                    log::warn!("Knock Mode auto-start failed: {}", e);
+                }
+            }
+        }
+    }
 
     // Note: Shortcuts are NOT initialized here.
     // The frontend is responsible for calling the `initialize_shortcuts` command
@@ -435,6 +463,15 @@ pub fn run(cli_args: CliArgs) {
             shortcut::change_smart_formatting_enabled_setting,
             shortcut::change_smart_formatting_mode_setting,
             shortcut::change_smart_formatting_app_aware_setting,
+            shortcut::change_transcription_languages_setting,
+            shortcut::set_user_name,
+            shortcut::set_known_names,
+            shortcut::set_knock_mode_enabled,
+            shortcut::start_knock_calibration,
+            shortcut::cancel_knock_calibration,
+            shortcut::delete_vocab_candidate,
+            shortcut::promote_vocab_candidate,
+            shortcut::clear_vocab_candidates,
             shortcut::add_snippet,
             shortcut::update_snippet,
             shortcut::delete_snippet,

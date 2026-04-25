@@ -22,7 +22,14 @@ pub fn detect() -> HardwareInfo {
     let ram_gb = detect_ram_gb();
     let is_apple_silicon = platform == "macos" && arch == "aarch64";
 
-    let tier = if is_apple_silicon && ram_gb >= 16 {
+    // Tier classifier:
+    //   high — Apple Silicon (unified memory + Neural Engine make even 8GB
+    //   M1s viable for Turbo) OR any system with 32GB+ RAM (a beefy x86_64
+    //   PC handles Turbo just fine; this previously got under-classed as
+    //   mid because only Apple Silicon was eligible for high).
+    //   mid  — anything else with at least 16GB.
+    //   low  — under 16GB.
+    let tier = if is_apple_silicon || ram_gb >= 32 {
         "high"
     } else if ram_gb >= 16 || arch == "aarch64" {
         "mid"

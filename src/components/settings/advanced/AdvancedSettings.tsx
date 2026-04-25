@@ -36,6 +36,7 @@ import { ExperimentalToggle } from "../ExperimentalToggle";
 import { KeyboardImplementationSelector } from "../debug/KeyboardImplementationSelector";
 import { AccelerationSelector } from "../AccelerationSelector";
 import { LazyStreamClose } from "../LazyStreamClose";
+import { ResetOnboardingButton } from "../ResetOnboardingButton";
 
 /* The Advanced ("Settings") page — a single scrollable list of collapsible
  * groups. Each group is closed by default; users open only what they care
@@ -119,6 +120,7 @@ export const AdvancedSettings: React.FC = () => {
       <CollapsibleGroup title={t("simplified.advancedPage.groups.experimental")}>
         <UpdateChecksToggle descriptionMode="tooltip" grouped />
         <ExperimentalToggle descriptionMode="tooltip" grouped />
+        <ResetOnboardingButton grouped />
         {experimentalEnabled && (
           <>
             <KeyboardImplementationSelector descriptionMode="tooltip" grouped />

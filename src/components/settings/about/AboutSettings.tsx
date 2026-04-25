@@ -2,7 +2,7 @@ import React, { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { getVersion } from "@tauri-apps/api/app";
 import { openUrl } from "@tauri-apps/plugin-opener";
-import { Github, Heart } from "lucide-react";
+import { Github, Twitter } from "lucide-react";
 import SpoknWordmark from "../../icons/SpoknWordmark";
 import { Button } from "../../ui/Button";
 
@@ -36,12 +36,12 @@ export const AboutSettings: React.FC = () => {
         <Button
           variant="primary"
           size="md"
-          onClick={() => openUrl("https://handy.computer/donate")}
+          onClick={() => openUrl("https://x.com/EncrypticTv")}
           className="flex items-center gap-1.5"
         >
-          <Heart size={13} strokeWidth={2} />
+          <Twitter size={13} strokeWidth={2} />
           {/* eslint-disable-next-line i18next/no-literal-string */}
-          Donate
+          Follow
         </Button>
         <Button
           variant="secondary"

@@ -162,6 +162,8 @@ const settingUpdaters: {
     commands.changeSmartFormattingModeSetting(value as SmartFormattingMode),
   smart_formatting_app_aware: (value) =>
     commands.changeSmartFormattingAppAwareSetting(value as boolean),
+  transcription_languages: (value) =>
+    commands.changeTranscriptionLanguagesSetting(value as string[]),
 };
 
 export const useSettingsStore = create<SettingsStore>()(

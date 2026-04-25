@@ -107,6 +107,9 @@ fn normalize_for_learning(word: &str, stopwords: &HashSet<&str>) -> Option<Strin
 /// Merge new learnings into an existing `custom_words` vec. Returns the
 /// number of genuinely new entries added (dedupe is case-insensitive).
 /// Enforces [`CUSTOM_WORDS_CAP`] by evicting oldest entries.
+///
+/// Used for direct promotions and tests. The candidate-aware path lives in
+/// [`merge_into_candidates`].
 pub fn merge_learnings(existing: &mut Vec<String>, learned: Vec<String>) -> usize {
     let existing_lower: HashSet<String> =
         existing.iter().map(|w| w.to_lowercase()).collect();
@@ -126,6 +129,84 @@ pub fn merge_learnings(existing: &mut Vec<String>, learned: Vec<String>) -> usiz
         existing.drain(..excess);
     }
     added
+}
+
+/// Confidence-aware merge: bump hits on existing candidates, add new ones,
+/// and promote any candidate that has crossed the configured threshold into
+/// the live `custom_words` list. Returns the list of newly-promoted words
+/// so callers can log/display them.
+///
+/// `now_secs` is a unix timestamp passed in for testability.
+pub fn merge_into_candidates(
+    candidates: &mut Vec<crate::settings::VocabCandidate>,
+    custom_words: &mut Vec<String>,
+    learned: Vec<String>,
+    now_secs: i64,
+) -> Vec<String> {
+    use crate::settings::{VocabCandidate, VOCAB_PROMOTE_THRESHOLD};
+
+    let mut newly_promoted = Vec::new();
+    let mut seen_this_batch: HashSet<String> = HashSet::new();
+
+    for word in learned {
+        let lower = word.to_lowercase();
+        if seen_this_batch.contains(&lower) {
+            continue;
+        }
+        seen_this_batch.insert(lower.clone());
+
+        // Find an existing candidate (case-insensitive on the stored word).
+        let existing = candidates
+            .iter_mut()
+            .find(|c| c.word.to_lowercase() == lower);
+
+        if let Some(c) = existing {
+            c.hits = c.hits.saturating_add(1);
+            c.last_seen = now_secs;
+            // Promote if threshold reached and not already promoted.
+            if !c.promoted && c.hits >= VOCAB_PROMOTE_THRESHOLD {
+                c.promoted = true;
+                if !custom_words
+                    .iter()
+                    .any(|w| w.to_lowercase() == lower)
+                {
+                    custom_words.push(c.word.clone());
+                    newly_promoted.push(c.word.clone());
+                }
+            }
+        } else {
+            candidates.push(VocabCandidate {
+                word,
+                hits: 1,
+                first_seen: now_secs,
+                last_seen: now_secs,
+                promoted: false,
+            });
+        }
+    }
+
+    // Soft cap on candidates to prevent unbounded growth — drop oldest
+    // unpromoted ones first.
+    const CANDIDATE_CAP: usize = 1000;
+    if candidates.len() > CANDIDATE_CAP {
+        // Keep promoted entries even if old; sort everything else by
+        // last_seen descending and drop the tail.
+        candidates.sort_by(|a, b| {
+            // Promoted first, then most-recently-seen first.
+            b.promoted
+                .cmp(&a.promoted)
+                .then_with(|| b.last_seen.cmp(&a.last_seen))
+        });
+        candidates.truncate(CANDIDATE_CAP);
+    }
+
+    // Enforce hard cap on the live word list (pre-existing behaviour).
+    if custom_words.len() > CUSTOM_WORDS_CAP {
+        let excess = custom_words.len() - CUSTOM_WORDS_CAP;
+        custom_words.drain(..excess);
+    }
+
+    newly_promoted
 }
 
 // ---------- macOS Accessibility polling ---------------------------------
@@ -149,11 +230,11 @@ pub fn start_capture_session(app: tauri::AppHandle, pasted: String) {
 
 #[cfg(target_os = "macos")]
 mod macos {
-    use super::{extract_substitutions, merge_learnings};
+    use super::{extract_substitutions, merge_into_candidates};
     use crate::settings::{get_settings, write_settings};
     use log::debug;
     use std::thread;
-    use std::time::{Duration, Instant};
+    use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
     use tauri::AppHandle;
 
     const POLL_INTERVAL: Duration = Duration::from_millis(2000);
@@ -214,16 +295,36 @@ mod macos {
             return;
         }
         let mut settings = get_settings(&app);
-        let added = merge_learnings(&mut settings.custom_words, learned.clone());
-        if added > 0 {
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|d| d.as_secs() as i64)
+            .unwrap_or(0);
+        // Update candidate hits; promote to custom_words once threshold met.
+        // The vec mutations need to happen on a single struct, so we work on
+        // separate temporary copies and then assign back.
+        let mut candidates = std::mem::take(&mut settings.vocab_candidates);
+        let mut custom_words = std::mem::take(&mut settings.custom_words);
+        let promoted = merge_into_candidates(
+            &mut candidates,
+            &mut custom_words,
+            learned.clone(),
+            now,
+        );
+        settings.vocab_candidates = candidates;
+        settings.custom_words = custom_words;
+        if !promoted.is_empty() {
             debug!(
-                "correction_capture: learned {} new vocab words: {:?}",
-                added, learned
+                "correction_capture: promoted {} candidate(s) to vocab: {:?}",
+                promoted.len(),
+                promoted
             );
-            write_settings(&app, settings);
         } else {
-            debug!("correction_capture: extracted words were all duplicates");
+            debug!(
+                "correction_capture: candidate(s) recorded but below promotion threshold: {:?}",
+                learned
+            );
         }
+        write_settings(&app, settings);
     }
 
     // ---------- raw AX FFI ------------------------------------------------
@@ -442,5 +543,96 @@ mod tests {
         assert!(existing.contains(&"new_word".to_string()));
         // Oldest (w0) should have been evicted
         assert!(!existing.contains(&"w0".to_string()));
+    }
+
+    // ---- candidate-pool tests ----
+
+    use crate::settings::VocabCandidate;
+
+    #[test]
+    fn first_correction_only_seeds_candidate_not_custom_words() {
+        let mut candidates: Vec<VocabCandidate> = Vec::new();
+        let mut custom_words: Vec<String> = Vec::new();
+        let promoted = merge_into_candidates(
+            &mut candidates,
+            &mut custom_words,
+            vec!["Anthropic".to_string()],
+            100,
+        );
+        assert!(promoted.is_empty(), "should not promote on first hit");
+        assert_eq!(candidates.len(), 1);
+        assert_eq!(candidates[0].hits, 1);
+        assert!(!candidates[0].promoted);
+        assert!(custom_words.is_empty());
+    }
+
+    #[test]
+    fn three_corrections_promote_to_custom_words() {
+        let mut candidates: Vec<VocabCandidate> = Vec::new();
+        let mut custom_words: Vec<String> = Vec::new();
+        for i in 0..3 {
+            let promoted = merge_into_candidates(
+                &mut candidates,
+                &mut custom_words,
+                vec!["Anthropic".to_string()],
+                100 + i,
+            );
+            if i < 2 {
+                assert!(promoted.is_empty(), "iter {i} should not promote");
+            } else {
+                assert_eq!(promoted, vec!["Anthropic".to_string()]);
+            }
+        }
+        assert_eq!(candidates.len(), 1);
+        assert!(candidates[0].promoted);
+        assert_eq!(candidates[0].hits, 3);
+        assert!(custom_words.contains(&"Anthropic".to_string()));
+    }
+
+    #[test]
+    fn case_insensitive_candidate_match() {
+        let mut candidates: Vec<VocabCandidate> = Vec::new();
+        let mut custom_words: Vec<String> = Vec::new();
+        merge_into_candidates(
+            &mut candidates,
+            &mut custom_words,
+            vec!["Anthropic".to_string()],
+            100,
+        );
+        merge_into_candidates(
+            &mut candidates,
+            &mut custom_words,
+            vec!["anthropic".to_string()],
+            101,
+        );
+        assert_eq!(candidates.len(), 1, "should dedupe case-insensitively");
+        assert_eq!(candidates[0].hits, 2);
+    }
+
+    #[test]
+    fn already_promoted_word_stays_in_custom_words() {
+        // A word that was promoted earlier shouldn't get re-added on a
+        // subsequent capture (no duplicates in custom_words).
+        let mut candidates = vec![VocabCandidate {
+            word: "Anthropic".to_string(),
+            hits: 5,
+            first_seen: 0,
+            last_seen: 100,
+            promoted: true,
+        }];
+        let mut custom_words = vec!["Anthropic".to_string()];
+        let promoted = merge_into_candidates(
+            &mut candidates,
+            &mut custom_words,
+            vec!["Anthropic".to_string()],
+            200,
+        );
+        assert!(promoted.is_empty());
+        assert_eq!(candidates[0].hits, 6);
+        assert_eq!(
+            custom_words.iter().filter(|w| w.as_str() == "Anthropic").count(),
+            1,
+            "no duplicate"
+        );
     }
 }

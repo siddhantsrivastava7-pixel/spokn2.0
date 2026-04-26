@@ -1,6 +1,6 @@
 [package]
 name = "spokn"
-version = "0.3.7"
+version = "0.3.8"
 description = "Spokn"
 authors = ["Spokn"]
 edition = "2021"

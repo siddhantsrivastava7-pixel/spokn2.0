@@ -18,8 +18,6 @@ import UserInfoOnboarding from "./components/onboarding/UserInfoOnboarding";
 import ConversationStatus from "./components/conversation/ConversationStatus";
 import { Sidebar, SidebarSection, SECTIONS_CONFIG } from "./components/Sidebar";
 import { RESET_ONBOARDING_EVENT } from "./components/settings/ResetOnboardingButton";
-import QuickSettings from "./components/QuickSettings";
-import { Zap } from "lucide-react";
 import { useSettings } from "./hooks/useSettings";
 import { useSettingsStore } from "./stores/settingsStore";
 import { useModelStore } from "./stores/modelStore";
@@ -50,7 +48,6 @@ function App() {
   const [isReturningUser, setIsReturningUser] = useState(false);
   const [currentSection, setCurrentSection] =
     useState<SidebarSection>("general");
-  const [quickSettingsOpen, setQuickSettingsOpen] = useState(false);
   const [recommendedModelId, setRecommendedModelId] = useState<string | null>(
     null,
   );
@@ -425,25 +422,6 @@ function App() {
           onSectionChange={setCurrentSection}
         />
         <div className="flex-1 flex flex-col overflow-hidden relative">
-          <div className="absolute top-4 right-5 z-30">
-            <button
-              type="button"
-              aria-label="Quick settings"
-              onClick={() => setQuickSettingsOpen((v) => !v)}
-              className={`h-8 w-8 rounded-lg border border-spokn-hairline flex items-center justify-center transition-all duration-200 ${
-                quickSettingsOpen
-                  ? "bg-spokn-surface-2 text-spokn-accent-blue border-spokn-hairline-2"
-                  : "bg-spokn-surface text-spokn-text-2 hover:text-spokn-text hover:bg-spokn-surface-2"
-              }`}
-            >
-              <Zap size={14} strokeWidth={1.7} />
-            </button>
-            <QuickSettings
-              open={quickSettingsOpen}
-              onClose={() => setQuickSettingsOpen(false)}
-              onOpenAdvanced={() => setCurrentSection("advanced")}
-            />
-          </div>
           <div className="flex-1 overflow-y-auto">
             <div className="flex flex-col items-stretch max-w-3xl mx-auto px-6 py-8 gap-6">
               <AccessibilityPermissions />

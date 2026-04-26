@@ -1167,6 +1167,16 @@ pub fn set_user_name(
     Ok(())
 }
 
+/// Cancel any in-flight Chat Mode countdown (the global one, fires
+/// on every transcription when chat_mode_enabled is true). Triggered
+/// by the "Cancel send" button in the countdown toast.
+#[tauri::command]
+#[specta::specta]
+pub fn chat_mode_cancel_send() -> Result<(), String> {
+    crate::clipboard::cancel_pending_chat_send();
+    Ok(())
+}
+
 /* ------------------------------------------------------------------
  * Conversation Mode commands
  * ------------------------------------------------------------------ */

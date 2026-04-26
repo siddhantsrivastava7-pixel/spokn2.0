@@ -482,6 +482,7 @@ pub fn run(cli_args: CliArgs) {
             shortcut::set_conversation_mode_enabled,
             shortcut::set_chat_mode_enabled,
             shortcut::set_chat_mode_countdown_secs,
+            shortcut::chat_mode_cancel_send,
             shortcut::conversation_pause,
             shortcut::conversation_resume,
             shortcut::conversation_force_send,

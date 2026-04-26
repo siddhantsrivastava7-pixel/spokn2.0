@@ -5,61 +5,22 @@ import { commands } from "@/bindings";
 import { useSettings } from "../../../hooks/useSettings";
 import { ToggleSwitch } from "../../ui/ToggleSwitch";
 import { SettingContainer } from "../../ui/SettingContainer";
-import { SegmentedControl } from "../../ui/SegmentedControl";
 
-/* Conversation Mode + Chat Mode controls.
- *
- * Conversation Mode = the listen→record→transcribe→insert loop inside
- * supported chat apps. Chat Mode (sub-feature) = auto-press Enter
- * after a countdown so the message actually sends.
- *
- * Both are macOS-only in v1 — toggles render disabled with a hint
- * on Windows/Linux. */
-
-const COUNTDOWN_OPTIONS: { value: string; label: string }[] = [
-  { value: "1", label: "1s" },
-  { value: "2", label: "2s" },
-  { value: "3", label: "3s" },
-  { value: "5", label: "5s" },
-];
+/* Conversation Mode toggle. Chat Mode (auto-send) is now a separate
+ * top-level control that applies to every transcription, not just
+ * Conversation Mode ones — see the ChatMode component. */
 
 export const ConversationMode: React.FC = () => {
   const { settings, refreshSettings } = useSettings();
   const isMac = platformType() === "macos";
 
   const conversationOn = (settings as any)?.conversation_mode_enabled ?? false;
-  const chatOn = (settings as any)?.chat_mode_enabled ?? false;
-  const countdown =
-    (settings as any)?.chat_mode_countdown_secs ?? 3;
-
   const [busy, setBusy] = useState(false);
 
   const setConv = async (v: boolean) => {
     setBusy(true);
     try {
       const r = await commands.setConversationModeEnabled(v);
-      if ((r as any).status === "error") toast.error((r as any).error);
-      await refreshSettings();
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  const setChat = async (v: boolean) => {
-    setBusy(true);
-    try {
-      const r = await commands.setChatModeEnabled(v);
-      if ((r as any).status === "error") toast.error((r as any).error);
-      await refreshSettings();
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  const setCountdown = async (n: number) => {
-    setBusy(true);
-    try {
-      const r = await commands.setChatModeCountdownSecs(n);
       if ((r as any).status === "error") toast.error((r as any).error);
       await refreshSettings();
     } finally {
@@ -101,35 +62,10 @@ export const ConversationMode: React.FC = () => {
         descriptionMode="inline"
         grouped={true}
       />
-      {conversationOn && (
-        <>
-          <ToggleSwitch
-            checked={chatOn}
-            onChange={setChat}
-            isUpdating={busy}
-            label="Chat Mode (auto-send)"
-            description="After each transcription, press Enter automatically following a countdown so the message sends without you touching the keyboard."
-            descriptionMode="inline"
-            grouped={true}
-          />
-          {chatOn && (
-            <SettingContainer
-              title="Send countdown"
-              description="Time you have to cancel before Spokn auto-sends the message."
-              descriptionMode="inline"
-              grouped={true}
-            >
-              <SegmentedControl<string>
-                value={String(countdown)}
-                onChange={(v) => setCountdown(parseInt(v, 10))}
-                options={COUNTDOWN_OPTIONS}
-                ariaLabel="Send countdown"
-                disabled={busy}
-              />
-            </SettingContainer>
-          )}
-        </>
-      )}
+      {/* Chat Mode is now a top-level toggle (General → Chat Mode)
+          since it applies to every transcription, not just
+          Conversation Mode ones. Kept this component focused on the
+          Conversation Mode loop alone. */}
     </>
   );
   /* eslint-enable i18next/no-literal-string */

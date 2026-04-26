@@ -274,18 +274,16 @@ impl ControllerCore {
                 if !ok || transcript.trim().is_empty() {
                     self.state = ConversationState::Listening;
                 } else {
+                    // Chat Mode countdown is now a GLOBAL feature in
+                    // clipboard::paste — no need to maintain a
+                    // separate state here. Just paste and resume
+                    // listening; the paste pipeline handles the
+                    // optional countdown + auto-Enter uniformly for
+                    // all transcription triggers.
                     actions.push(Action::Paste {
                         text: transcript.clone(),
                     });
-                    if self.chat_mode_enabled {
-                        self.state = ConversationState::SendingIn {
-                            transcript: transcript.clone(),
-                            secs_left: self.countdown_secs,
-                        };
-                        actions.push(Action::StartCountdownTimer);
-                    } else {
-                        self.state = ConversationState::Listening;
-                    }
+                    self.state = ConversationState::Listening;
                 }
             }
 
@@ -450,7 +448,11 @@ mod tests {
     }
 
     #[test]
-    fn chat_mode_arms_countdown_and_sends_at_zero() {
+    fn chat_mode_no_longer_arms_countdown_in_controller() {
+        // v0.3.7: Chat Mode countdown is a GLOBAL post-paste feature
+        // in clipboard::paste, not a Conversation Mode state machine
+        // step. The controller pastes and goes straight back to
+        // Listening regardless of chat_mode_enabled.
         let mut c = ctrl(true);
         c.handle(Event::Enable);
         c.handle(supported());
@@ -460,32 +462,8 @@ mod tests {
             transcript: "hi".into(),
             ok: true,
         });
-        assert!(acts.contains(&Action::StartCountdownTimer));
-        assert!(matches!(
-            c.state(),
-            ConversationState::SendingIn { secs_left: 3, .. }
-        ));
-        c.handle(Event::CountdownTick);
-        c.handle(Event::CountdownTick);
-        let final_acts = c.handle(Event::CountdownTick);
-        assert!(final_acts.contains(&Action::SendReturn));
-        assert_eq!(c.state(), &ConversationState::Listening);
-    }
-
-    #[test]
-    fn cancel_send_keeps_transcript_skips_send() {
-        let mut c = ctrl(true);
-        c.handle(Event::Enable);
-        c.handle(supported());
-        c.handle(Event::SpeechStart);
-        c.handle(Event::SpeechEnd);
-        c.handle(Event::TranscriptionDone {
-            transcript: "hi".into(),
-            ok: true,
-        });
-        let acts = c.handle(Event::CancelSend);
-        assert!(!acts.contains(&Action::SendReturn));
-        assert!(acts.contains(&Action::StopCountdownTimer));
+        assert!(acts.iter().any(|a| matches!(a, Action::Paste { .. })));
+        assert!(!acts.contains(&Action::StartCountdownTimer));
         assert_eq!(c.state(), &ConversationState::Listening);
     }
 

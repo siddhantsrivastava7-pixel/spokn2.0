@@ -5,9 +5,63 @@ use crate::settings::{get_settings, AutoSubmitKey, ClipboardHandling, PasteMetho
 use enigo::{Direction, Enigo, Key, Keyboard};
 use log::info;
 use std::process::Command;
+use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::Duration;
-use tauri::{AppHandle, Manager};
+use tauri::{AppHandle, Emitter, Manager};
 use tauri_plugin_clipboard_manager::ClipboardExt;
+
+/// Monotonic token. Each chat-mode countdown captures the value at
+/// schedule time and re-checks before firing Enter; if the token has
+/// advanced (cancel pressed, or a new transcription started a fresh
+/// countdown), the stale fire is dropped.
+static CHAT_SEND_TOKEN: AtomicU32 = AtomicU32::new(0);
+
+/// Cancel any in-flight chat-mode countdown. Called by the
+/// "Cancel send" UI button. Bumps the token so any worker thread
+/// currently waiting will short-circuit on its next tick.
+pub fn cancel_pending_chat_send() {
+    CHAT_SEND_TOKEN.fetch_add(1, Ordering::SeqCst);
+}
+
+/// Schedule an Enter press after `secs` seconds. Emits Tauri events
+/// (`chat-mode-countdown`, `chat-mode-countdown-cancelled`,
+/// `chat-mode-countdown-sent`) so the frontend can show a toast with
+/// a Cancel button + live countdown.
+fn schedule_chat_mode_send(app_handle: AppHandle, secs: u8) {
+    if secs == 0 {
+        // 0-second countdown == instant. Skip the threading dance.
+        send_chat_mode_enter(&app_handle);
+        return;
+    }
+    let my_token = CHAT_SEND_TOKEN.fetch_add(1, Ordering::SeqCst) + 1;
+    let app = app_handle;
+    std::thread::spawn(move || {
+        for remaining in (1..=secs).rev() {
+            // Emit before sleeping so the toast updates immediately.
+            let _ = app.emit(
+                "chat-mode-countdown",
+                serde_json::json!({
+                    "secs_left": remaining,
+                    "total": secs,
+                }),
+            );
+            std::thread::sleep(Duration::from_secs(1));
+            if CHAT_SEND_TOKEN.load(Ordering::SeqCst) != my_token {
+                // Superseded or cancelled.
+                let _ = app.emit("chat-mode-countdown-cancelled", ());
+                return;
+            }
+        }
+        // Final check before firing — the cancel might have landed
+        // during the last sleep.
+        if CHAT_SEND_TOKEN.load(Ordering::SeqCst) != my_token {
+            let _ = app.emit("chat-mode-countdown-cancelled", ());
+            return;
+        }
+        send_chat_mode_enter(&app);
+        let _ = app.emit("chat-mode-countdown-sent", ());
+    });
+}
 
 #[cfg(target_os = "linux")]
 use crate::utils::{is_kde_wayland, is_wayland};
@@ -672,7 +726,24 @@ pub fn paste(text: String, app_handle: AppHandle) -> Result<(), String> {
         }
     }
 
-    if should_send_auto_submit(settings.auto_submit, paste_method) {
+    // Chat Mode (preferred) takes precedence: countdown then Enter.
+    // Fires on EVERY transcription regardless of which trigger
+    // produced it (hotkey, Conversation Mode, Knock Mode). The
+    // countdown gives the user a chance to cancel via the toast
+    // before an unwanted Enter lands.
+    //
+    // Legacy auto_submit remains for users who explicitly want
+    // zero-delay sending (no countdown). One or the other; chat
+    // mode wins if both are enabled.
+    if settings.chat_mode_enabled && paste_method != PasteMethod::None {
+        // Drop the enigo lock before scheduling so the worker
+        // thread can re-acquire it for the Enter press.
+        drop(enigo);
+        schedule_chat_mode_send(
+            app_handle.clone(),
+            settings.chat_mode_countdown_secs,
+        );
+    } else if should_send_auto_submit(settings.auto_submit, paste_method) {
         std::thread::sleep(Duration::from_millis(50));
         send_return_key(&mut enigo, settings.auto_submit_key)?;
     }

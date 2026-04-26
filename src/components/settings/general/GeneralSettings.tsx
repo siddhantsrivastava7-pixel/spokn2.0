@@ -13,6 +13,7 @@ import { useSettings } from "../../../hooks/useSettings";
 import { commands, type SmartFormattingMode } from "@/bindings";
 import { KnockMode } from "./KnockMode";
 import { ConversationMode } from "./ConversationMode";
+import { ChatMode } from "./ChatMode";
 
 const SF_MODES: { value: SmartFormattingMode; label: string }[] = [
   { value: "smart", label: "Smart" },
@@ -162,6 +163,7 @@ export const GeneralSettings: React.FC = () => {
         )}
         <KnockMode />
         <ConversationMode />
+        <ChatMode />
       </SettingsGroup>
 
       <SettingsGroup title={t("simplified.general.smartTitle")}>

@@ -925,6 +925,14 @@ async setChatModeCountdownSecs(secs: number) : Promise<Result<null, string>> {
     else return { status: "error", error: e  as any };
 }
 },
+async chatModeCancelSend() : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("chat_mode_cancel_send") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 async conversationPause() : Promise<Result<string, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("conversation_pause") };

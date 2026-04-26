@@ -151,9 +151,15 @@ impl ConversationDriver {
                     .inner()
                     .clone();
                 tm.initiate_model_load();
-                // Also pre-warm the recorder's VAD context so the
-                // first try_start_recording isn't held up opening the
-                // mic stream.
+                // Pre-warm the recorder + switch to AlwaysOn mode so
+                // the cpal stream stays open between utterances.
+                // Without this, each VAD-triggered try_start_recording
+                // re-opens the stream from scratch (~200-500ms on
+                // macOS), dropping the leading word(s) of the user's
+                // sentence — exactly the "missing 1-2 words at start"
+                // bug. AlwaysOn keeps the stream hot AND lets the
+                // recorder's internal VAD prefill capture the
+                // pre-onset audio so nothing is lost.
                 let rm = inner
                     .app
                     .state::<Arc<AudioRecordingManager>>()
@@ -162,6 +168,13 @@ impl ConversationDriver {
                 std::thread::spawn(move || {
                     if let Err(e) = rm.preload_vad() {
                         log::debug!("Conversation Mode: preload_vad: {e}");
+                    }
+                    if let Err(e) = rm.update_mode(
+                        crate::managers::audio::MicrophoneMode::AlwaysOn,
+                    ) {
+                        log::warn!(
+                            "Conversation Mode: AlwaysOn pre-warm failed: {e}"
+                        );
                     }
                 });
 
@@ -185,7 +198,29 @@ impl ConversationDriver {
                     );
                 }
             }
-            Action::StopAudioEngine => inner.vad_loop.stop(),
+            Action::StopAudioEngine => {
+                inner.vad_loop.stop();
+                // Restore the recorder to OnDemand so we don't leave
+                // the user's mic stream open after Conversation Mode
+                // turns off. Best-effort — if the user had AlwaysOn
+                // set as their preference, this overrides it; v0.3.7
+                // is willing to take that hit because Conversation
+                // Mode users are the ones who explicitly opted in.
+                let rm = inner
+                    .app
+                    .state::<Arc<AudioRecordingManager>>()
+                    .inner()
+                    .clone();
+                std::thread::spawn(move || {
+                    if let Err(e) = rm.update_mode(
+                        crate::managers::audio::MicrophoneMode::OnDemand,
+                    ) {
+                        log::debug!(
+                            "Conversation Mode: restore OnDemand failed: {e}"
+                        );
+                    }
+                });
+            }
 
             Action::StartRecording => {
                 let rm = inner.app.state::<Arc<AudioRecordingManager>>();

@@ -1123,7 +1123,26 @@ pub fn load_or_create_app_settings(app: &AppHandle) -> AppSettings {
         store.set("settings", serde_json::to_value(&settings).unwrap());
     }
 
+    if migrate_chat_mode_v2(&mut settings) {
+        debug!("Applied chat-mode v2 migration");
+        store.set("settings", serde_json::to_value(&settings).unwrap());
+    }
+
     settings
+}
+
+/// One-time migration for v0.3.7: legacy `auto_submit` users adopt
+/// the new global Chat Mode (with cancel-able countdown) so they get
+/// the safer behaviour without having to re-discover a setting.
+/// `auto_submit` itself stays available in Advanced for users who
+/// want true zero-delay sending.
+fn migrate_chat_mode_v2(settings: &mut AppSettings) -> bool {
+    if !settings.auto_submit || settings.chat_mode_enabled {
+        return false;
+    }
+    settings.chat_mode_enabled = true;
+    settings.auto_submit = false;
+    true
 }
 
 /// One-time clean-up for the v0.3.2 vocab redesign:

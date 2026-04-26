@@ -115,6 +115,41 @@ pub struct VocabCandidate {
 /// promoted from `vocab_candidates` into the active `custom_words` list.
 pub const VOCAB_PROMOTE_THRESHOLD: u32 = 3;
 
+/// Confidence-based vocabulary entry (v0.3.9 redesign).
+///
+/// Replaces [`VocabCandidate`]'s one-way hit counter with a
+/// bidirectional confidence score: kept words tick up, reverted
+/// words tick down, and an entry is auto-removed when it goes too
+/// negative. Active words feed Whisper's `initial_prompt`.
+///
+/// Lifecycle:
+///   - Edit detected (1:1 word swap)            → confidence = 1
+///   - Word recurs and user keeps it            → confidence += 1
+///   - Word recurs and user changes/reverts it  → confidence -= 1
+///   - confidence ≥ ACTIVE_THRESHOLD            → biases Whisper
+///   - confidence ≤ REMOVE_THRESHOLD            → entry deleted
+#[derive(Serialize, Deserialize, Debug, Clone, Type)]
+pub struct VocabEntry {
+    pub word: String,
+    /// Signed; can go negative to surface "user disagrees" signal.
+    pub confidence: i32,
+    /// Total transcriptions where this word was relevant
+    /// (pasted output OR user-corrected input).
+    pub samples_seen: u32,
+    /// Subset of `samples_seen` where the user accepted the word
+    /// (didn't edit it away).
+    pub samples_kept: u32,
+    pub first_corrected_at: i64,
+    pub last_seen_at: i64,
+}
+
+/// Confidence at which an entry starts feeding Whisper's prompt.
+pub const VOCAB_ACTIVE_THRESHOLD: i32 = 3;
+
+/// Confidence at which an entry is auto-removed (clearly not the
+/// right substitution — user keeps reverting it).
+pub const VOCAB_REMOVE_THRESHOLD: i32 = -3;
+
 /// A text snippet. When the user speaks the `trigger`, Spokn expands it
 /// into `expansion` before the text is injected. Case-insensitive
 /// word-boundary match; longer triggers beat shorter ones.
@@ -563,12 +598,19 @@ pub struct AppSettings {
     /// match by default, and re-seed the user's name + known names.
     #[serde(default)]
     pub vocab_v2_migrated: bool,
-    /// Auto-vocabulary learning master switch. Default OFF in
-    /// v0.3.2 — the previous algorithm was over-promoting tokens
-    /// that weren't real corrections. Will be re-enabled in v0.3.3
-    /// when the confidence-based redesign ships.
-    #[serde(default)]
+    /// Auto-vocabulary learning master switch. v0.3.9: defaults
+    /// back to ON now that the confidence-based learner replaces
+    /// the over-eager v0.3.1 algorithm. Users who had it forcibly
+    /// off get the new default via the v0.3.9 migration.
+    #[serde(default = "default_auto_vocab_learning_enabled")]
     pub auto_vocab_learning_enabled: bool,
+    /// Confidence-based vocabulary entries (v0.3.9). Distinct from
+    /// the deprecated `vocab_candidates` (one-way hit counter,
+    /// always empty in v0.3.2+). New entries land here on real
+    /// 1:1 word-swap corrections, gain confidence on subsequent
+    /// acceptance, lose it on reverts.
+    #[serde(default)]
+    pub vocab_entries: Vec<VocabEntry>,
 }
 
 /// Mirror of `crate::formatting::FormattingMode` that lives in the settings
@@ -622,6 +664,10 @@ pub fn default_chat_mode_countdown_secs() -> u8 {
 /// almost always a stuck VAD or an open mic the user forgot about.
 pub fn default_conversation_max_utterance_ms() -> u32 {
     45_000
+}
+
+fn default_auto_vocab_learning_enabled() -> bool {
+    true
 }
 
 fn default_smart_formatting_app_aware() -> bool {
@@ -1043,7 +1089,8 @@ pub fn get_default_settings() -> AppSettings {
         conversation_max_utterance_ms: default_conversation_max_utterance_ms(),
         hinglish_seed: Vec::new(),
         vocab_v2_migrated: false,
-        auto_vocab_learning_enabled: false,
+        auto_vocab_learning_enabled: default_auto_vocab_learning_enabled(),
+        vocab_entries: Vec::new(),
     }
 }
 
@@ -1128,7 +1175,27 @@ pub fn load_or_create_app_settings(app: &AppHandle) -> AppSettings {
         store.set("settings", serde_json::to_value(&settings).unwrap());
     }
 
+    if migrate_vocab_v3(&mut settings) {
+        debug!("Applied vocab v3 migration");
+        store.set("settings", serde_json::to_value(&settings).unwrap());
+    }
+
     settings
+}
+
+/// v0.3.9 migration: re-enable auto-vocab-learning by default for
+/// users who were stuck on the v0.3.2 emergency-OFF setting. Only
+/// flips false → true ONCE (gated on a magic sentinel: a fresh
+/// install ships with `vocab_entries` empty AND
+/// `auto_vocab_learning_enabled = true`, so we only flip when the
+/// flag is currently false). After this runs once, user can flip
+/// it back off in settings if they prefer.
+fn migrate_vocab_v3(settings: &mut AppSettings) -> bool {
+    if settings.auto_vocab_learning_enabled {
+        return false;
+    }
+    settings.auto_vocab_learning_enabled = true;
+    true
 }
 
 /// One-time migration for v0.3.7: legacy `auto_submit` users adopt

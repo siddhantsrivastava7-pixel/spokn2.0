@@ -1,36 +1,48 @@
 import React, { useMemo, useState } from "react";
-import { Trash2, Check, BookOpen, Plus } from "lucide-react";
+import { Trash2, BookOpen, Plus } from "lucide-react";
 import { toast } from "sonner";
-import { commands, type VocabCandidate } from "@/bindings";
+import { commands } from "@/bindings";
 import { useSettings } from "../../../hooks/useSettings";
 import { Button } from "../../ui/Button";
 import { Input } from "../../ui/Input";
 
-/* Vocabulary — auto-learned words awaiting promotion + the live list of
- * promoted words feeding Whisper.
+/* Vocabulary — auto-learned words via the v0.3.9 confidence pipeline.
  *
- * Confidence model: each correction bumps a candidate's hit counter.
- * Once it hits the promotion threshold (3 by default) the word moves
- * into custom_words and starts biasing transcription. Users can
- * manually promote a word early ("trust this now") or delete entries
- * that look like typos. */
-const PROMOTE_THRESHOLD = 3;
+ * Two sections: Active (confidence >= ACTIVE_THRESHOLD, currently
+ * biasing Whisper) and Learning (1 <= confidence < ACTIVE_THRESHOLD,
+ * not yet trusted). User can delete any entry. Confidence rises on
+ * acceptance / further correction toward this word, falls when the
+ * user reverts it. */
+const ACTIVE_THRESHOLD = 3;
+
+interface VocabEntry {
+  word: string;
+  confidence: number;
+  samples_seen: number;
+  samples_kept: number;
+  first_corrected_at: number;
+  last_seen_at: number;
+}
 
 export const VocabularySettings: React.FC = () => {
   const { settings, refreshSettings } = useSettings();
   const [busy, setBusy] = useState(false);
 
-  const candidates: VocabCandidate[] = settings?.vocab_candidates ?? [];
-  const promoted = useMemo(
-    () => candidates.filter((c) => c.promoted),
-    [candidates],
-  );
-  const pending = useMemo(
+  const entries: VocabEntry[] = ((settings as any)?.vocab_entries ?? []) as
+    VocabEntry[];
+  const active = useMemo(
     () =>
-      candidates
-        .filter((c) => !c.promoted)
-        .sort((a, b) => b.hits - a.hits || b.last_seen - a.last_seen),
-    [candidates],
+      entries
+        .filter((e) => e.confidence >= ACTIVE_THRESHOLD)
+        .sort((a, b) => b.confidence - a.confidence),
+    [entries],
+  );
+  const learning = useMemo(
+    () =>
+      entries
+        .filter((e) => e.confidence >= 1 && e.confidence < ACTIVE_THRESHOLD)
+        .sort((a, b) => b.confidence - a.confidence || b.last_seen_at - a.last_seen_at),
+    [entries],
   );
 
   // Names = full names of OTHER people the user dictates about. Distinct
@@ -72,20 +84,8 @@ export const VocabularySettings: React.FC = () => {
     if (!confirm(`Remove "${word}" from vocabulary?`)) return;
     setBusy(true);
     try {
-      const r = await commands.deleteVocabCandidate(word);
-      if (r.status === "error") toast.error(r.error);
-      await refreshSettings();
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  const promote = async (word: string) => {
-    setBusy(true);
-    try {
-      const r = await commands.promoteVocabCandidate(word);
-      if (r.status === "error") toast.error(r.error);
-      else toast.success(`"${word}" trusted`);
+      const r = await (commands as any).deleteVocabEntry(word);
+      if ((r as any).status === "error") toast.error((r as any).error);
       await refreshSettings();
     } finally {
       setBusy(false);
@@ -97,8 +97,8 @@ export const VocabularySettings: React.FC = () => {
       return;
     setBusy(true);
     try {
-      const r = await commands.clearVocabCandidates();
-      if (r.status === "error") toast.error(r.error);
+      const r = await (commands as any).clearVocabEntries();
+      if ((r as any).status === "error") toast.error((r as any).error);
       await refreshSettings();
     } finally {
       setBusy(false);
@@ -138,9 +138,10 @@ export const VocabularySettings: React.FC = () => {
           </h2>
           <p className="mt-1 text-[13px] text-spokn-text-2 max-w-lg leading-relaxed">
             {/* eslint-disable-next-line i18next/no-literal-string */}
-            Words Spokn has learned from the corrections you make in other
-            apps. New words wait for {PROMOTE_THRESHOLD} confirmations
-            before they start biasing transcription — guards against typos.
+            Spokn learns words you actually correct. Each clean
+            correction nudges a word's confidence up; reverting it
+            nudges it down. Words reach Active at {ACTIVE_THRESHOLD}+
+            and start biasing transcription.
           </p>
         </div>
         <div className="flex items-center gap-2 shrink-0">
@@ -155,7 +156,7 @@ export const VocabularySettings: React.FC = () => {
             Reset all
           </Button>
         </div>
-        {false && candidates.length > 0 && (
+        {entries.length > 0 && (
           <Button
             variant="danger-ghost"
             size="md"
@@ -224,18 +225,22 @@ export const VocabularySettings: React.FC = () => {
       </Section>
       {/* eslint-enable i18next/no-literal-string */}
 
-      {/* Trusted (promoted) */}
-      <Section title="Trusted — biasing transcription">
-        {promoted.length === 0 ? (
-          <Empty>No trusted words yet. Keep correcting and they'll graduate here.</Empty>
+      {/* Active — currently biasing Whisper */}
+      {/* eslint-disable i18next/no-literal-string */}
+      <Section title="Active — biasing transcription">
+        {active.length === 0 ? (
+          <Empty>
+            No active words yet. Edit a transcript with a clean 1-word swap
+            (e.g. "Raj" → "Rajesh") to start teaching Spokn.
+          </Empty>
         ) : (
           <List>
-            {promoted.map((c) => (
+            {active.map((e) => (
               <Row
-                key={c.word}
-                label={c.word}
-                meta={`${c.hits}× confirmed`}
-                onDelete={() => remove(c.word)}
+                key={e.word}
+                label={e.word}
+                meta={`confidence ${e.confidence}`}
+                onDelete={() => remove(e.word)}
                 disabled={busy}
                 accent
               />
@@ -244,25 +249,25 @@ export const VocabularySettings: React.FC = () => {
         )}
       </Section>
 
-      {/* Pending */}
-      <Section title={`Pending — needs ${PROMOTE_THRESHOLD} confirmations`}>
-        {pending.length === 0 ? (
-          <Empty>Nothing pending. Edit a transcript to start teaching Spokn new words.</Empty>
+      {/* Learning — confidence 1 or 2, not yet active */}
+      <Section title={`Learning — needs confidence ${ACTIVE_THRESHOLD}+`}>
+        {learning.length === 0 ? (
+          <Empty>Nothing in flight. New corrections land here first.</Empty>
         ) : (
           <List>
-            {pending.map((c) => (
+            {learning.map((e) => (
               <Row
-                key={c.word}
-                label={c.word}
-                meta={`${c.hits}/${PROMOTE_THRESHOLD}`}
-                onPromote={() => promote(c.word)}
-                onDelete={() => remove(c.word)}
+                key={e.word}
+                label={e.word}
+                meta={`${e.confidence}/${ACTIVE_THRESHOLD}`}
+                onDelete={() => remove(e.word)}
                 disabled={busy}
               />
             ))}
           </List>
         )}
       </Section>
+      {/* eslint-enable i18next/no-literal-string */}
     </div>
   );
 };
@@ -299,11 +304,10 @@ const Empty: React.FC<{ children: React.ReactNode }> = ({ children }) => (
 const Row: React.FC<{
   label: string;
   meta: string;
-  onPromote?: () => void;
   onDelete: () => void;
   disabled?: boolean;
   accent?: boolean;
-}> = ({ label, meta, onPromote, onDelete, disabled, accent }) => (
+}> = ({ label, meta, onDelete, disabled, accent }) => (
   <div className="group flex items-center justify-between px-4 py-2.5 hover:bg-spokn-surface-2/60 transition-colors">
     <div className="flex items-center gap-3 min-w-0">
       <span
@@ -321,16 +325,6 @@ const Row: React.FC<{
       </span>
     </div>
     <div className="flex items-center gap-1 shrink-0 opacity-0 group-hover:opacity-100 transition-opacity">
-      {onPromote && (
-        <button
-          onClick={onPromote}
-          disabled={disabled}
-          title="Trust now"
-          className="h-7 w-7 rounded-md flex items-center justify-center text-spokn-text-3 hover:text-spokn-accent-blue hover:bg-spokn-surface transition-colors disabled:opacity-40"
-        >
-          <Check size={13} strokeWidth={2} />
-        </button>
-      )}
       <button
         onClick={onDelete}
         disabled={disabled}

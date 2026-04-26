@@ -628,6 +628,19 @@ impl TranscriptionManager {
                             if !settings.custom_words.is_empty() {
                                 prompt_parts.push(settings.custom_words.join(", "));
                             }
+                            // v0.3.9: include auto-learned words that
+                            // reached the active confidence threshold.
+                            let active_learned: Vec<&str> = settings
+                                .vocab_entries
+                                .iter()
+                                .filter(|e| {
+                                    e.confidence >= crate::settings::VOCAB_ACTIVE_THRESHOLD
+                                })
+                                .map(|e| e.word.as_str())
+                                .collect();
+                            if !active_learned.is_empty() {
+                                prompt_parts.push(active_learned.join(", "));
+                            }
                             let initial_prompt = if prompt_parts.is_empty() {
                                 None
                             } else {

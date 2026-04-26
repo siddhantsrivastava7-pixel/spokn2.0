@@ -1,18 +1,27 @@
-//! Post-paste correction capture.
+//! Post-paste correction capture (v0.3.9 confidence-based redesign).
 //!
 //! After Spokn pastes a transcript into the focused app, this module polls
-//! the focused text field via macOS Accessibility API for up to 30s to see
-//! if the user edits the text. When a diff is detected, the substituted
-//! word(s) are appended to `settings.custom_words` so Whisper's decoder
-//! biases toward them on future transcriptions — the vocabulary grows as
-//! the user naturally corrects mistakes.
+//! the focused text field via macOS Accessibility API for up to 30s to
+//! see if the user edits the text. The new pipeline only learns from
+//! CLEAN 1:1 word swaps — multi-word edits, insertions, deletions are
+//! ignored entirely (too noisy for safe learning).
 //!
-//! Pure diff logic lives here cross-platform. Platform-specific text
-//! reading currently supports macOS only (the Accessibility permission
-//! is already required for paste to work). Windows/Linux support is a
-//! later pass.
+//! Confidence model:
+//!   - Clean swap detected `X → Y` at the same word position:
+//!       * Y is added/incremented in `vocab_entries` (+1)
+//!       * X, if it was an existing entry, is decremented (-1)
+//!   - No edit at all (final text == pasted text):
+//!       * Every active vocab word in the pasted text gets +1
+//!         (user implicitly accepted what Whisper produced for them)
+//!   - Anything messier: ignored. No learning is better than wrong
+//!     learning — the v0.3.1 algorithm taught us this.
+//!
+//! Entries auto-deactivate at confidence ≤ -3 (user keeps reverting
+//! us; clearly wrong) and become active at confidence ≥ 3 (used as
+//! Whisper `initial_prompt` bias).
 
 use std::collections::HashSet;
+use crate::settings::VocabEntry;
 
 /// Words that are too common to learn safely. Learning `from → "the"` would
 /// cause catastrophic substitutions on future transcripts.
@@ -209,6 +218,164 @@ pub fn merge_into_candidates(
     newly_promoted
 }
 
+// ============================================================
+// v0.3.9 confidence-based pipeline
+// ============================================================
+
+/// One detected swap: user replaced `removed` with `added` at the
+/// same word position. Both tokens are pre-stripped of edge
+/// punctuation and case-preserved as the user wrote them.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WordSwap {
+    pub removed: String,
+    pub added: String,
+}
+
+/// Detect a clean 1:1 word swap between `pasted` and `edited`.
+///
+/// Returns `Some(swap)` only when:
+///   - Both texts have the SAME number of whitespace-separated tokens.
+///   - EXACTLY ONE token differs (case- and punctuation-insensitive).
+///
+/// Anything else — multi-word swap, insertion, deletion, or no
+/// change — returns `None`. Better to learn nothing than to learn
+/// the wrong thing; the v0.3.1 algorithm taught us that.
+pub fn detect_one_to_one_swap(pasted: &str, edited: &str) -> Option<WordSwap> {
+    let p_tokens: Vec<&str> = pasted.split_whitespace().collect();
+    let e_tokens: Vec<&str> = edited.split_whitespace().collect();
+    if p_tokens.len() != e_tokens.len() || p_tokens.is_empty() {
+        return None;
+    }
+    let mut diff_index: Option<usize> = None;
+    for (i, (p, e)) in p_tokens.iter().zip(e_tokens.iter()).enumerate() {
+        if !tokens_equivalent(p, e) {
+            if diff_index.is_some() {
+                // Second differing position → not a 1:1 swap.
+                return None;
+            }
+            diff_index = Some(i);
+        }
+    }
+    let i = diff_index?;
+    let removed = strip_edge_punct(p_tokens[i]).to_string();
+    let added = strip_edge_punct(e_tokens[i]).to_string();
+    if removed.is_empty() || added.is_empty() {
+        return None;
+    }
+    // Reject swaps where either side is too short or a stopword —
+    // these produce false-positive entries (e.g., "I" → "a").
+    let stopwords: HashSet<&str> = STOPWORDS.iter().copied().collect();
+    if added.chars().count() < MIN_LEARN_LEN
+        || stopwords.contains(added.to_lowercase().as_str())
+    {
+        return None;
+    }
+    Some(WordSwap { removed, added })
+}
+
+/// Apply a single correction to the vocab entries. Returns a list
+/// of (word, became_active) tuples for any state changes worth
+/// surfacing.
+///
+/// The bidirectional confidence rules — straight from the user's
+/// spec:
+///   1. Clean swap detected → `added` gains confidence (+1, new
+///      entries land at confidence=1); `removed`, if it's an
+///      existing entry, loses confidence (-1).
+///   2. No swap and final text == pasted text → every active vocab
+///      word that appeared in `pasted` gains confidence (+1)
+///      because the user implicitly accepted them.
+///   3. Anything else (multi-word edits) is ignored entirely.
+///
+/// Entries with confidence ≤ VOCAB_REMOVE_THRESHOLD are dropped.
+pub fn apply_correction(
+    entries: &mut Vec<VocabEntry>,
+    pasted: &str,
+    edited: &str,
+    now_secs: i64,
+) -> Vec<String> {
+    use crate::settings::{VOCAB_ACTIVE_THRESHOLD, VOCAB_REMOVE_THRESHOLD};
+
+    let mut newly_active: Vec<String> = Vec::new();
+
+    if pasted == edited {
+        // Acceptance path: bump every vocab word that appeared in
+        // the pasted output. We only count words the user could
+        // plausibly have spotted — short stopwords are skipped.
+        let pasted_lower: HashSet<String> = pasted
+            .split_whitespace()
+            .map(|w| strip_edge_punct(w).to_lowercase())
+            .filter(|w| !w.is_empty())
+            .collect();
+
+        for entry in entries.iter_mut() {
+            if pasted_lower.contains(&entry.word.to_lowercase()) {
+                let was_active = entry.confidence >= VOCAB_ACTIVE_THRESHOLD;
+                entry.confidence = entry.confidence.saturating_add(1);
+                entry.samples_seen = entry.samples_seen.saturating_add(1);
+                entry.samples_kept = entry.samples_kept.saturating_add(1);
+                entry.last_seen_at = now_secs;
+                if !was_active && entry.confidence >= VOCAB_ACTIVE_THRESHOLD {
+                    newly_active.push(entry.word.clone());
+                }
+            }
+        }
+        // No removal pass on accept-only path (confidence only ↑).
+        return newly_active;
+    }
+
+    let swap = match detect_one_to_one_swap(pasted, edited) {
+        Some(s) => s,
+        None => return newly_active, // multi-edit; learn nothing
+    };
+
+    let added_lower = swap.added.to_lowercase();
+    let removed_lower = swap.removed.to_lowercase();
+
+    // Decrement the removed word IF it was already known. User
+    // reverted us — clear signal that the previous learning was
+    // wrong (or at least wrong here).
+    if let Some(rm_entry) = entries
+        .iter_mut()
+        .find(|e| e.word.to_lowercase() == removed_lower)
+    {
+        rm_entry.confidence = rm_entry.confidence.saturating_sub(1);
+        rm_entry.samples_seen = rm_entry.samples_seen.saturating_add(1);
+        rm_entry.last_seen_at = now_secs;
+    }
+
+    // Bump (or insert) the added word.
+    if let Some(add_entry) = entries
+        .iter_mut()
+        .find(|e| e.word.to_lowercase() == added_lower)
+    {
+        let was_active = add_entry.confidence >= VOCAB_ACTIVE_THRESHOLD;
+        add_entry.confidence = add_entry.confidence.saturating_add(1);
+        add_entry.samples_seen = add_entry.samples_seen.saturating_add(1);
+        add_entry.samples_kept = add_entry.samples_kept.saturating_add(1);
+        add_entry.last_seen_at = now_secs;
+        if !was_active && add_entry.confidence >= VOCAB_ACTIVE_THRESHOLD {
+            newly_active.push(add_entry.word.clone());
+        }
+    } else {
+        entries.push(VocabEntry {
+            word: swap.added,
+            confidence: 1,
+            samples_seen: 1,
+            samples_kept: 0,
+            first_corrected_at: now_secs,
+            last_seen_at: now_secs,
+        });
+    }
+
+    // Sweep removed-threshold entries — keeps the storage clean and
+    // prevents a "cursed" word from sticking around polluting the
+    // suggestion surface.
+    entries.retain(|e| e.confidence > VOCAB_REMOVE_THRESHOLD);
+
+    newly_active
+}
+
 // ---------- macOS Accessibility polling ---------------------------------
 
 /// Start a capture session in a dedicated thread. After Spokn pastes
@@ -240,7 +407,7 @@ pub fn start_capture_session(app: tauri::AppHandle, pasted: String) {
 
 #[cfg(target_os = "macos")]
 mod macos {
-    use super::{extract_substitutions, merge_into_candidates};
+    use super::apply_correction;
     use crate::settings::{get_settings, write_settings};
     use log::debug;
     use std::thread;
@@ -295,43 +462,22 @@ mod macos {
             }
         }
 
-        // Session ended. If the final buffer differs from what we pasted,
-        // extract substitutions and learn.
-        if last_value == pasted {
-            return;
-        }
-        let learned = extract_substitutions(&pasted, &last_value);
-        if learned.is_empty() {
-            return;
-        }
+        // Session ended. Run the v0.3.9 confidence-based learner over
+        // the pasted-vs-final pair. apply_correction handles all four
+        // cases internally (clean swap, no edit, multi-edit, junk).
         let mut settings = get_settings(&app);
         let now = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .map(|d| d.as_secs() as i64)
             .unwrap_or(0);
-        // Update candidate hits; promote to custom_words once threshold met.
-        // The vec mutations need to happen on a single struct, so we work on
-        // separate temporary copies and then assign back.
-        let mut candidates = std::mem::take(&mut settings.vocab_candidates);
-        let mut custom_words = std::mem::take(&mut settings.custom_words);
-        let promoted = merge_into_candidates(
-            &mut candidates,
-            &mut custom_words,
-            learned.clone(),
-            now,
-        );
-        settings.vocab_candidates = candidates;
-        settings.custom_words = custom_words;
-        if !promoted.is_empty() {
+        let mut entries = std::mem::take(&mut settings.vocab_entries);
+        let newly_active = apply_correction(&mut entries, &pasted, &last_value, now);
+        settings.vocab_entries = entries;
+        if !newly_active.is_empty() {
             debug!(
-                "correction_capture: promoted {} candidate(s) to vocab: {:?}",
-                promoted.len(),
-                promoted
-            );
-        } else {
-            debug!(
-                "correction_capture: candidate(s) recorded but below promotion threshold: {:?}",
-                learned
+                "correction_capture: {} word(s) reached active threshold: {:?}",
+                newly_active.len(),
+                newly_active
             );
         }
         write_settings(&app, settings);
@@ -451,6 +597,173 @@ mod macos {
         }
         let cf = CFString::wrap_under_create_rule(value as CFStringRef);
         Some(cf.to_string())
+    }
+}
+
+// ---------- v0.3.9 confidence-pipeline tests ----------------------------
+#[cfg(test)]
+mod v3_tests {
+    use super::*;
+    use crate::settings::{
+        VocabEntry, VOCAB_ACTIVE_THRESHOLD, VOCAB_REMOVE_THRESHOLD,
+    };
+
+    fn ent(word: &str, conf: i32) -> VocabEntry {
+        VocabEntry {
+            word: word.into(),
+            confidence: conf,
+            samples_seen: conf.max(0) as u32,
+            samples_kept: conf.max(0) as u32,
+            first_corrected_at: 0,
+            last_seen_at: 0,
+        }
+    }
+
+    #[test]
+    fn detect_clean_one_to_one_swap() {
+        let s = detect_one_to_one_swap("my name is Raj", "my name is Rajesh");
+        assert_eq!(
+            s,
+            Some(WordSwap {
+                removed: "Raj".into(),
+                added: "Rajesh".into()
+            })
+        );
+    }
+
+    #[test]
+    fn detect_no_swap_when_text_unchanged() {
+        assert!(detect_one_to_one_swap("hello world", "hello world").is_none());
+    }
+
+    #[test]
+    fn detect_rejects_insertion() {
+        // "hello world" → "hello big world" — extra word, not a swap
+        assert!(detect_one_to_one_swap("hello world", "hello big world").is_none());
+    }
+
+    #[test]
+    fn detect_rejects_deletion() {
+        assert!(detect_one_to_one_swap("hello big world", "hello world").is_none());
+    }
+
+    #[test]
+    fn detect_rejects_two_word_changes() {
+        // Two positions differ → too noisy to learn safely
+        assert!(detect_one_to_one_swap(
+            "send Raj five dollars",
+            "send Rajesh ten dollars"
+        )
+        .is_none());
+    }
+
+    #[test]
+    fn detect_rejects_short_or_stopword_added() {
+        // "I" is too short and a stopword
+        assert!(detect_one_to_one_swap("a b", "a I").is_none());
+        // "the" is a stopword
+        assert!(detect_one_to_one_swap("hello cat", "hello the").is_none());
+    }
+
+    #[test]
+    fn detect_punctuation_insensitive() {
+        let s = detect_one_to_one_swap("hi Raj.", "hi Rajesh.");
+        assert_eq!(s.unwrap().added, "Rajesh");
+    }
+
+    #[test]
+    fn apply_correction_creates_entry_at_confidence_1() {
+        let mut entries: Vec<VocabEntry> = Vec::new();
+        let _ = apply_correction(
+            &mut entries,
+            "my name is Raj",
+            "my name is Rajesh",
+            100,
+        );
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].word, "Rajesh");
+        assert_eq!(entries[0].confidence, 1);
+    }
+
+    #[test]
+    fn apply_correction_decrements_removed_existing() {
+        // User had "Raj" learned with confidence 5; now they're
+        // reverting it ("Raj" → "Rajesh"). Raj should drop.
+        let mut entries = vec![ent("Raj", 5)];
+        let _ = apply_correction(
+            &mut entries,
+            "my name is Raj",
+            "my name is Rajesh",
+            100,
+        );
+        let raj = entries.iter().find(|e| e.word == "Raj").unwrap();
+        assert_eq!(raj.confidence, 4);
+        let rajesh = entries.iter().find(|e| e.word == "Rajesh").unwrap();
+        assert_eq!(rajesh.confidence, 1);
+    }
+
+    #[test]
+    fn apply_correction_drops_entry_at_remove_threshold() {
+        // Already at -2; one more decrement → -3 → removed.
+        let mut entries = vec![ent("BadWord", VOCAB_REMOVE_THRESHOLD + 1)];
+        let _ = apply_correction(
+            &mut entries,
+            "BadWord here",
+            "Better here",
+            100,
+        );
+        assert!(!entries.iter().any(|e| e.word == "BadWord"));
+    }
+
+    #[test]
+    fn apply_correction_promotes_at_active_threshold() {
+        // Existing entry at confidence 2; one more increment → 3 = active.
+        let mut entries = vec![ent("Rajesh", VOCAB_ACTIVE_THRESHOLD - 1)];
+        let activated = apply_correction(
+            &mut entries,
+            "my name is Raj",
+            "my name is Rajesh",
+            100,
+        );
+        assert_eq!(activated, vec!["Rajesh".to_string()]);
+        let r = entries.iter().find(|e| e.word == "Rajesh").unwrap();
+        assert!(r.confidence >= VOCAB_ACTIVE_THRESHOLD);
+    }
+
+    #[test]
+    fn apply_correction_acceptance_path_bumps_active_words() {
+        // No edit at all. Pasted contains "Rajesh" which is active.
+        let mut entries = vec![ent("Rajesh", 4)];
+        let _ = apply_correction(
+            &mut entries,
+            "Hi Rajesh",
+            "Hi Rajesh",
+            100,
+        );
+        let r = entries.iter().find(|e| e.word == "Rajesh").unwrap();
+        assert_eq!(r.confidence, 5);
+        assert_eq!(r.samples_kept, 5);
+    }
+
+    #[test]
+    fn apply_correction_acceptance_does_not_create_new_entries() {
+        // No-op when there's no edit and no existing matching entry.
+        let mut entries: Vec<VocabEntry> = Vec::new();
+        let _ = apply_correction(&mut entries, "Hello world", "Hello world", 100);
+        assert!(entries.is_empty());
+    }
+
+    #[test]
+    fn apply_correction_multi_edit_learns_nothing() {
+        // Two-word swap — too noisy. v0.3.9 explicitly skips.
+        let mut entries: Vec<VocabEntry> = Vec::new();
+        let _ = apply_correction(
+            &mut entries,
+            "send Raj five dollars",
+            "send Rajesh ten dollars",
+            100,
+        );
+        assert!(entries.is_empty());
     }
 }
 

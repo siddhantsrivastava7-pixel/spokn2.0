@@ -1439,6 +1439,30 @@ pub fn cancel_knock_calibration(
     Ok(())
 }
 
+/// Delete a single learned vocabulary entry by word (v0.3.9).
+/// Case-insensitive match.
+#[tauri::command]
+#[specta::specta]
+pub fn delete_vocab_entry(app: AppHandle, word: String) -> Result<(), String> {
+    let lower = word.to_lowercase();
+    let mut s = settings::get_settings(&app);
+    s.vocab_entries.retain(|e| e.word.to_lowercase() != lower);
+    settings::write_settings(&app, s);
+    Ok(())
+}
+
+/// Clear all confidence-based vocab entries in one shot (v0.3.9).
+/// User-facing equivalent of "start vocabulary learning over from
+/// scratch". Custom names + Hinglish seed are not touched.
+#[tauri::command]
+#[specta::specta]
+pub fn clear_vocab_entries(app: AppHandle) -> Result<(), String> {
+    let mut s = settings::get_settings(&app);
+    s.vocab_entries.clear();
+    settings::write_settings(&app, s);
+    Ok(())
+}
+
 /// Wipe ALL auto-learned vocabulary in one shot. Use case: the v0.3.2
 /// migration ran but the user has accumulated more poisoned data
 /// since, OR the user wants to start fresh after toggling Hindi off

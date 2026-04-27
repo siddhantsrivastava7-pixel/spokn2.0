@@ -611,6 +611,14 @@ pub struct AppSettings {
     /// acceptance, lose it on reverts.
     #[serde(default)]
     pub vocab_entries: Vec<VocabEntry>,
+    /// ML-based noise suppression (RNNoise) upstream of VAD. v0.4.0:
+    /// default ON. Only takes effect when the input device runs at
+    /// 48 kHz natively — most laptop mics — and is silently bypassed
+    /// for other rates. Users can flip off in Advanced if they want
+    /// pure raw audio (e.g. for debugging or quiet-room recording
+    /// where the denoiser's gating may drop subtle phonemes).
+    #[serde(default = "default_noise_suppression_enabled")]
+    pub noise_suppression_enabled: bool,
 }
 
 /// Mirror of `crate::formatting::FormattingMode` that lives in the settings
@@ -667,6 +675,10 @@ pub fn default_conversation_max_utterance_ms() -> u32 {
 }
 
 fn default_auto_vocab_learning_enabled() -> bool {
+    true
+}
+
+fn default_noise_suppression_enabled() -> bool {
     true
 }
 
@@ -1091,6 +1103,7 @@ pub fn get_default_settings() -> AppSettings {
         vocab_v2_migrated: false,
         auto_vocab_learning_enabled: default_auto_vocab_learning_enabled(),
         vocab_entries: Vec::new(),
+        noise_suppression_enabled: default_noise_suppression_enabled(),
     }
 }
 

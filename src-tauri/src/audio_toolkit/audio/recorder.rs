@@ -13,7 +13,10 @@ use cpal::{
 };
 
 use crate::audio_toolkit::{
-    audio::{AudioVisualiser, FrameResampler},
+    audio::{
+        noise_suppression::{Denoiser, RNNOISE_SAMPLE_RATE},
+        AudioVisualiser, FrameResampler,
+    },
     constants,
     vad::{self, VadFrame},
     VoiceActivityDetector,
@@ -36,6 +39,9 @@ pub struct AudioRecorder {
     worker_handle: Option<std::thread::JoinHandle<()>>,
     vad: Option<Arc<Mutex<Box<dyn vad::VoiceActivityDetector>>>>,
     level_cb: Option<Arc<dyn Fn(Vec<f32>) + Send + Sync + 'static>>,
+    /// Whether to insert RNNoise between cpal and the resampler.
+    /// Only takes effect when the device's native rate is 48 kHz.
+    noise_suppression: bool,
 }
 
 impl AudioRecorder {
@@ -46,7 +52,16 @@ impl AudioRecorder {
             worker_handle: None,
             vad: None,
             level_cb: None,
+            noise_suppression: false,
         })
+    }
+
+    /// Enable RNNoise-based noise suppression for this recorder.
+    /// Caller decides based on user setting; recorder transparently
+    /// no-ops when the cpal stream's native rate isn't 48 kHz.
+    pub fn with_noise_suppression(mut self, enabled: bool) -> Self {
+        self.noise_suppression = enabled;
+        self
     }
 
     pub fn with_vad(mut self, vad: Box<dyn VoiceActivityDetector>) -> Self {
@@ -83,6 +98,7 @@ impl AudioRecorder {
         let vad = self.vad.clone();
         // Move the optional level callback into the worker thread
         let level_cb = self.level_cb.clone();
+        let noise_suppression = self.noise_suppression;
 
         let worker = std::thread::spawn(move || {
             let stop_flag = Arc::new(AtomicBool::new(false));
@@ -159,7 +175,15 @@ impl AudioRecorder {
                 Ok((stream, sample_rate)) => {
                     let _ = init_tx.send(Ok(()));
                     // Keep the stream alive while we process samples.
-                    run_consumer(sample_rate, vad, sample_rx, cmd_rx, level_cb, stop_flag);
+                    run_consumer(
+                        sample_rate,
+                        vad,
+                        sample_rx,
+                        cmd_rx,
+                        level_cb,
+                        stop_flag,
+                        noise_suppression,
+                    );
                     drop(stream);
                 }
                 Err(error_message) => {
@@ -399,12 +423,34 @@ fn run_consumer(
     cmd_rx: mpsc::Receiver<Cmd>,
     level_cb: Option<Arc<dyn Fn(Vec<f32>) + Send + Sync + 'static>>,
     stop_flag: Arc<AtomicBool>,
+    noise_suppression: bool,
 ) {
     let mut frame_resampler = FrameResampler::new(
         in_sample_rate as usize,
         constants::WHISPER_SAMPLE_RATE as usize,
         Duration::from_millis(30),
     );
+
+    // RNNoise expects exactly 48 kHz mono. Skip the denoiser when
+    // the device is at any other rate — most macOS / Windows mics
+    // run native 48 kHz so this fires for the common case; older
+    // Bluetooth headsets (16 kHz SCO) silently fall through to the
+    // un-denoised path.
+    let mut denoiser: Option<Denoiser> = if noise_suppression
+        && in_sample_rate == RNNOISE_SAMPLE_RATE
+    {
+        log::info!("RNNoise enabled (input @ {} Hz)", in_sample_rate);
+        Some(Denoiser::new())
+    } else {
+        if noise_suppression {
+            log::info!(
+                "RNNoise disabled — input rate is {} Hz, not {}",
+                in_sample_rate,
+                RNNOISE_SAMPLE_RATE
+            );
+        }
+        None
+    };
 
     let mut processed_samples = Vec::<f32>::new();
     let mut recording = false;
@@ -453,14 +499,26 @@ fn run_consumer(
         };
 
         // ---------- spectrum processing ---------------------------------- //
+        // Visualiser sees the RAW (un-denoised) signal so the level
+        // meter still reflects what the mic is actually picking up,
+        // not what the model will end up hearing.
         if let Some(buckets) = visualizer.feed(&raw) {
             if let Some(cb) = &level_cb {
                 cb(buckets);
             }
         }
 
+        // ---------- noise suppression (RNNoise, optional) ---------------- //
+        let denoised: Vec<f32>;
+        let to_resample: &[f32] = if let Some(d) = denoiser.as_mut() {
+            denoised = d.process(&raw);
+            &denoised
+        } else {
+            &raw
+        };
+
         // ---------- existing pipeline ------------------------------------ //
-        frame_resampler.push(&raw, &mut |frame: &[f32]| {
+        frame_resampler.push(to_resample, &mut |frame: &[f32]| {
             handle_frame(frame, recording, &vad, &mut processed_samples)
         });
 

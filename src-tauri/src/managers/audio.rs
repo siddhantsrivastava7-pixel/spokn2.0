@@ -125,11 +125,18 @@ fn create_audio_recorder(
         .map_err(|e| anyhow::anyhow!("Failed to create SileroVad: {}", e))?;
     let smoothed_vad = SmoothedVad::new(Box::new(silero), 15, 15, 2);
 
+    // Read at construction — if the user toggles noise suppression
+    // mid-session it'll apply on next stream open. Acceptable: each
+    // recording cycle reopens the stream in OnDemand mode anyway.
+    let noise_suppression_enabled =
+        crate::settings::get_settings(app_handle).noise_suppression_enabled;
+
     // Recorder with VAD plus a spectrum-level callback that forwards updates to
     // the frontend.
     let recorder = AudioRecorder::new()
         .map_err(|e| anyhow::anyhow!("Failed to create AudioRecorder: {}", e))?
         .with_vad(Box::new(smoothed_vad))
+        .with_noise_suppression(noise_suppression_enabled)
         .with_level_callback({
             let app_handle = app_handle.clone();
             move |levels| {
